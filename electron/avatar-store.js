@@ -1,0 +1,166 @@
+const crypto = require('crypto');
+const fs = require('fs/promises');
+const path = require('path');
+
+const maximumAvatarBytes = 512 * 1024 * 1024;
+const builtInAvatarId = 'localcore-core';
+const avatarIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validateAvatarBytes(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 12 || bytes.byteLength > maximumAvatarBytes) {
+    throw new Error('VRM avatar file must be between 12 bytes and 512 MB.');
+  }
+  const header = Buffer.from(bytes.buffer, bytes.byteOffset, 12);
+  if (header.toString('ascii', 0, 4) !== 'glTF' ||
+      header.readUInt32LE(4) !== 2 ||
+      header.readUInt32LE(8) !== bytes.byteLength) {
+    throw new Error('The selected file is not a binary VRM/GLB avatar.');
+  }
+}
+
+async function writeAtomically(filePath, bytes) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}-${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporaryPath, bytes, { flag: 'wx' });
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true });
+    throw error;
+  }
+}
+
+function createAvatarStore(directory, defaultAvatarPath = null) {
+  const avatarPath = path.join(directory, 'active.vrm');
+  const libraryPath = path.join(directory, 'library');
+  const catalogPath = path.join(directory, 'catalog.json');
+  const selectionPath = path.join(directory, 'selection.json');
+
+  async function readJson(filePath, fallback) {
+    try {
+      return JSON.parse(await fs.readFile(filePath, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return fallback;
+      throw error;
+    }
+  }
+
+  async function readCatalog() {
+    const stored = await readJson(catalogPath, []);
+    if (!Array.isArray(stored)) throw new Error('The local avatar catalog is invalid.');
+    const catalog = stored.filter(item => item && avatarIdPattern.test(item.id) &&
+      typeof item.name === 'string' && item.name.trim());
+
+    // Preserve avatars saved by older LocalCore versions, which used active.vrm.
+    if (!catalog.length) {
+      let legacyBytes;
+      try {
+        legacyBytes = await fs.readFile(avatarPath);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (legacyBytes) {
+        const id = crypto.randomUUID();
+        const name = 'Imported character';
+        await writeAtomically(path.join(libraryPath, `${id}.vrm`), legacyBytes);
+        catalog.push({ id, name });
+        await writeAtomically(catalogPath, JSON.stringify(catalog, null, 2));
+        await writeAtomically(selectionPath, JSON.stringify({ id }));
+      }
+    }
+    return catalog;
+  }
+
+  async function hasDefaultAvatar() {
+    if (!defaultAvatarPath) return false;
+    try {
+      await fs.access(defaultAvatarPath);
+      return true;
+    } catch (error) {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
+  async function activeId(catalog, includeDefault) {
+    const selection = await readJson(selectionPath, null);
+    if (selection && (selection.id === builtInAvatarId && includeDefault ||
+        catalog.some(item => item.id === selection.id))) return selection.id;
+    if (catalog.length) return catalog[0].id;
+    return includeDefault ? builtInAvatarId : null;
+  }
+
+  async function getAvatarPath(id, catalog) {
+    if (id === builtInAvatarId && await hasDefaultAvatar()) return defaultAvatarPath;
+    if (avatarIdPattern.test(id) && catalog.some(item => item.id === id)) {
+      return path.join(libraryPath, `${id}.vrm`);
+    }
+    return null;
+  }
+
+  async function load(id) {
+    const catalog = await readCatalog();
+    const includeDefault = await hasDefaultAvatar();
+    const requestedId = id || await activeId(catalog, includeDefault);
+    if (!requestedId) return null;
+    const filePath = await getAvatarPath(requestedId, catalog);
+    if (!filePath) return null;
+    try {
+      return new Uint8Array(await fs.readFile(filePath));
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  return {
+    async save(bytes, requestedName = 'Imported character') {
+      validateAvatarBytes(bytes);
+      const catalog = await readCatalog();
+      const rawName = path.basename(String(requestedName || 'Imported character'))
+        .replace(/\.vrm$/i, '').trim();
+      const name = (rawName || 'Imported character').slice(0, 120);
+      const id = crypto.randomUUID();
+      const storedBytes = Buffer.from(bytes);
+      await writeAtomically(path.join(libraryPath, `${id}.vrm`), storedBytes);
+      catalog.push({ id, name });
+      await writeAtomically(catalogPath, JSON.stringify(catalog, null, 2));
+      // Keep the old path current for compatibility with app versions before the library picker.
+      await writeAtomically(avatarPath, storedBytes);
+      await writeAtomically(selectionPath, JSON.stringify({ id }));
+      return { id, name, builtIn: false };
+    },
+
+    async list() {
+      const catalog = await readCatalog();
+      const includeDefault = await hasDefaultAvatar();
+      const avatars = includeDefault
+        ? [{ id: builtInAvatarId, name: 'LocalCore Core', builtIn: true }]
+        : [];
+      avatars.push(...catalog.map(item => ({ ...item, builtIn: false })));
+      return { avatars, activeId: await activeId(catalog, includeDefault) };
+    },
+
+    async select(id) {
+      const catalog = await readCatalog();
+      const includeDefault = await hasDefaultAvatar();
+      if (id !== builtInAvatarId || !includeDefault) {
+        if (!avatarIdPattern.test(id) || !catalog.some(item => item.id === id)) {
+          throw new Error('That avatar is not available in the local character library.');
+        }
+      }
+      await writeAtomically(selectionPath, JSON.stringify({ id }));
+      return id;
+    },
+
+    load,
+
+    async loadActive() {
+      const listing = await this.list();
+      if (!listing.activeId) return null;
+      return this.load(listing.activeId);
+    }
+  };
+}
+
+module.exports = { createAvatarStore, maximumAvatarBytes, validateAvatarBytes, builtInAvatarId };

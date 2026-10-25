@@ -1,0 +1,6 @@
+{
+  "name": "LocalCore Architecture Blueprint",
+  "description": "Product and technical architecture blueprint for LocalCore, a local-first Windows desktop AI companion with VRM avatar, user-controlled memory, voice, and desktop tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

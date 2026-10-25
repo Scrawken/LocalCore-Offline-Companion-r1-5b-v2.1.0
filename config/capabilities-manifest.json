@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "2.0",
+  "generatedAt": "2026-10-08T22:07:17.248Z",
+  "userGoal": "I want an offline chat generator that of which AI avatars can generate images and communicate via text, audio call, and video call.",
+  "activeModalities": [
+    "text_reasoning",
+    "image_generation",
+    "music_audio",
+    "video_generation"
+  ],
+  "folderLayout": {
+    "text_reasoning": "models/text_reasoning/",
+    "image_generation": "models/image_generation/",
+    "music_audio": "models/music_audio/",
+    "video_generation": "models/video_generation/",
+    "vision_multimodal": "models/vision_multimodal/",
+    "code_generation": "models/code_generation/"
+  },
+  "outputDirectories": {
+    "images": "output/images/",
+    "audio": "output/audio/",
+    "video": "output/video/",
+    "text": "output/text/"
+  }
+}

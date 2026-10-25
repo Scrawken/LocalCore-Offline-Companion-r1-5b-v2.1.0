@@ -1,0 +1,51 @@
+{
+  "name": "localcore-offline-desktop",
+  "version": "2.0.0",
+  "description": "Self-Contained Offline AI Desktop Studio with Native Executable & Real Multimodal Engines",
+  "main": "electron/main.js",
+  "scripts": {
+    "build:avatar": "node scripts/build-avatar-runtime.js",
+    "prestart": "npm run build:avatar",
+    "start": "electron .",
+    "dist:win": "node installer/build-dist-win.js",
+    "stage:assets": "node installer/stage-assets.js",
+    "setup:local-model": "node scripts/setup-local-model.js",
+    "setup:multimodal": "node scripts/setup-multimodal.js",
+    "setup:chat-model": "node scripts/setup-chat-model.js",
+    "verify:chat-model": "node scripts/verify-chat-model.js",
+    "test:memory": "node test/local-memory-store.test.js",
+    "auto-install": "cmd /c installer\\auto-install.bat",
+    "test": "node test/test-suite.js",
+    "verify-integrity": "node installer/updater.js",
+    "test:inference": "node test/inference-smoke-test.js",
+    "test:chat-context": "node test/chat-context.test.js",
+    "test:media-devices": "node test/media-device-utils.test.js",
+    "test:avatar-store": "node test/avatar-store.test.js",
+    "test:avatar-expression": "node test/avatar-expression.test.js",
+    "test:avatar-material-override": "node test/avatar-material-override.test.js",
+    "test:chat-model": "node test/chat-model-smoke-test.js",
+    "test:vision": "node test/vision-smoke-test.js",
+    "test:speech": "node test/speech-smoke-test.js",
+    "cli": "node engine/local-inference-daemon.js --cli"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
+    "dotenv": "^16.4.5",
+    "electron": "^30.0.0",
+    "three": "^0.186.1"
+  },
+  "localAI": {
+    "activeModel": "dolphin3-llama3.1-8b-q4_k_m",
+    "architecture": "Llama 3.1 / Transformer",
+    "quantization": "Q4_K_M",
+    "osTarget": "windows",
+    "gpuBackend": "cuda",
+    "airGapLocked": true,
+    "hasRealGguf": true,
+    "hasNativeExe": true
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^8.0.1",
+    "esbuild": "^0.28.2"
+  }
+}

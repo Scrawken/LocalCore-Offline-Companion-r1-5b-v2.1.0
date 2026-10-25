@@ -1,0 +1,278 @@
+
+# LocalCore — Product Blueprint (v0.1 draft)
+
+Windows desktop AI companion. Local-first, offline-capable, cloud strictly optional.
+Status: proposal for review. No code, no integrations assumed.
+
+---
+
+## 0. Framing assumptions (please confirm — see Section 5)
+
+These are the assumptions the rest of the document rests on. Each one changes the design if wrong.
+
+1. **One companion persona by default**, with a data model that can later hold multiple user-created characters. (Alternative: multi-character from day one.)
+2. **Memory capture is opt-in per category** (conversation facts, transcripts, generated media). Nothing is remembered or persisted unless the user turns it on.
+3. **The user's own hardware is the primary runtime.** Cloud is an enhancement, never a requirement for the core loop.
+4. **"Desktop presence" means an on-screen avatar window plus tray icon**, not OS-level automation of other apps (that is Phase 5, permissioned).
+5. **Existing Electron project is extended, not rewritten.** The VRM renderer, local inference, and conversation memory already in the codebase are kept and wrapped in the interfaces below.
+
+---
+
+## 1. Phased MVP Plan
+
+Guiding rule: **each phase ships something usable and independently testable.** No phase depends on a later one to be worth releasing.
+
+### Phase 0 — Foundation & guardrails
+The unglamorous phase that makes every later privacy promise enforceable.
+
+Deliverables:
+- Egress Gateway: the single choke point for all network calls.
+- Consent & Permission store with defaults = deny.
+- Local app-data layout (conversations, memory, assets, logs) with a "no writes outside this dir" guarantee.
+- Crash/restart persistence for conversation state.
+
+Acceptance criteria:
+- App cold-starts and completes a chat turn **with all outbound network blocked** at the OS level, with no crash and no retry storm.
+- No file is written outside the app-data directory (verified by a filesystem watcher over a full session).
+- A network call attempted without a granted consent record is blocked and logged, not silently retried.
+
+### Phase 1 — Reliable character & chat
+The core loop. This is the phase that must feel *good* before anything else is added.
+
+Deliverables:
+- Persona definition (name, voice/tone, backstory, boundaries, refusal style).
+- Streaming chat with interruption and cancel.
+- Conversation persistence, rename, search, delete.
+- Replaceable model provider (at least two providers proven swappable).
+- Context assembly: system persona + recent turns + retrieved memory (empty for now).
+
+Acceptance criteria:
+- A 50-turn session survives app restart with byte-identical history and order.
+- Swapping the model provider mid-session does not corrupt history or duplicate turns.
+- Cancelling mid-stream leaves no partial turn persisted and the next turn is clean.
+- First token latency and full-response latency measured and reported on target hardware (numbers TBD — see Section 5).
+- Deleting a conversation removes its rows and any derived summaries; a second delete is a no-op.
+
+### Phase 2 — Memory you control
+Turns "chat" into "companion" — but only with user control.
+
+Deliverables:
+- Memory layers: session buffer → rolling summary → long-term facts.
+- Facts UI: list, add, edit, delete, with source turn shown.
+- Global memory off switch and per-category toggles.
+- Export (readable JSON) and full delete.
+- Local embedding-based retrieval.
+
+Acceptance criteria:
+- Deleting a fact removes it from retrieval within one turn (verified by asking a question that depended on it).
+- With memory disabled: no facts are written, and none are injected into any prompt.
+- Every retrieved fact shown in a debug view traces to a stored record and a source turn.
+- Export produces human-readable JSON; import restores the same retrieval behaviour.
+- Memory store is encrypted at rest using OS facilities (Windows DPAPI / safeStorage).
+
+### Phase 3 — Voice
+Deliverables:
+- Speech-to-text (push-to-talk as the default input).
+- Text-to-speech playback with stop/barge-in.
+- Always-visible mic indicator and per-session mute.
+- Optional voice selection.
+
+Acceptance criteria:
+- Push-to-talk produces a transcript and a reply without touching the mouse.
+- TTS playback can be interrupted mid-sentence and the companion reacts correctly.
+- Mic indicator is visible whenever the mic is open; mute takes effect immediately.
+- **No audio is persisted to disk** unless the user explicitly enables transcript/audio saving.
+- Measured end-to-end voice round-trip latency reported on target hardware.
+
+### Phase 4 — Avatar expressiveness
+Deliverables:
+- Emotion states (neutral, happy, thinking, concerned, etc.) driven by conversation cues.
+- Lip-sync driven by TTS output.
+- Idle animation and blink behaviour.
+- Window modes: full window, half-body overlay, tray-only.
+
+Acceptance criteria:
+- Each emotion state can be triggered deterministically from a test harness.
+- Lip-sync visibly tracks TTS amplitude; mouth closes on silence.
+- Idle animation begins after a configurable idle period and stops on interaction.
+- Avatar rendering stays within a stated CPU/GPU budget on the target hardware floor.
+- Tray-only mode still allows chat and voice.
+
+### Phase 5 — Desktop tools with permissions
+Deliverables:
+- Tool registry where each tool declares its scope (filesystem roots, shell, screen, etc.).
+- Action Broker that mediates every consequential action through an approval prompt.
+- Approval UX that shows the exact target and effect (file path, command, diff) before execution.
+- Scoped filesystem access limited to user-approved roots.
+- Audit log: timestamp, tool, target, decision, result.
+
+Acceptance criteria:
+- An action without a granted scope is blocked, not executed, and surfaced to the user.
+- The approval dialog shows the exact command/path/diff being approved.
+- "Allow once", "Allow for session", and "Always allow" behave distinctly and are revocable.
+- Revoking a scope stops the corresponding tool immediately, mid-session.
+- Every consequential action appears in the audit log with a matching result entry.
+- A destructive action (delete/overwrite) can never proceed on a single implicit approval.
+
+### Phase 6 — Optional cloud & extended presence
+Deliverables:
+- Explicit cloud enablement, off by default, with a plain-language notice.
+- Per-request consent showing exactly what would leave the device (redaction preview).
+- Cloud providers behind the same Model Provider interface as local.
+- Optional account sync of personas/settings (never memory or media by default).
+
+Acceptance criteria:
+- Fresh install performs zero network egress (verified at the OS level).
+- Enabling cloud requires an explicit toggle plus an acknowledgment; it cannot be enabled implicitly.
+- Each cloud call presents a preview of the payload before sending.
+- Disabling cloud returns the app to fully local operation with no residual background calls.
+- Sync, if enabled, excludes memory and media unless separately opted in.
+
+---
+
+## 2. Component architecture & API boundaries
+
+### Layering (one direction of dependency, top depends on bottom)
+
+- **Presentation layer** — chat window, avatar window, tray, settings, permission dialogs.
+- **Companion Core (Orchestrator)** — owns a conversation turn from input to response. Coordinates memory, model, voice, avatar cues, and tools.
+- **Capability services** — Model Provider, Memory, Voice, Avatar, Desktop Tools. Each has a narrow contract and no knowledge of the others.
+- **Platform services** — Permission & Consent, Egress Gateway, Asset Vault, Audit Log, Model/Asset Store.
+- **Foundation** — Electron main/renderer, local storage, OS keychain/DPAPI.
+
+### Architectural invariants
+
+- **Single egress choke point.** No service may open a socket directly. All outbound traffic goes through the Egress Gateway, which consults the Consent store. This is what makes "off by default" provable.
+- **Services never call each other directly.** They communicate through the Orchestrator or via events. This keeps each one independently testable and swappable.
+- **Every capability declares its requirements** (network, mic, filesystem roots). The Permission service grants or denies at runtime.
+- **The model is a replaceable dependency**, addressed only through the Model Provider contract.
+
+### Component contracts (responsibilities and boundary shape)
+
+**Model Provider**
+- Responsibility: turn a message list plus parameters into a streamed completion; provide embeddings.
+- Boundary: accepts messages + params, returns a token stream + usage; exposes a capabilities descriptor (context size, tools, vision, embeddings). Never receives raw user files — only text the Orchestrator has assembled.
+- Implementations: local runtime (primary), cloud provider (optional, gated by Egress Gateway).
+
+**Memory Service**
+- Responsibility: session buffer, rolling summary, long-term facts, retrieval, and full lifecycle control.
+- Boundary: write(fact, source), retrieve(query) → ranked facts, list/edit/delete, export/import, enable/disable per category. Never returns data from a disabled category.
+- Storage: encrypted local store + local vector index.
+
+**Voice Service**
+- Responsibility: STT and TTS.
+- Boundary: transcribe(audioStream) → text, synthesize(text) → audioStream with timing/viseme metadata. Persistence off by default. Cloud voice is a separate implementation behind the same contract, routed through Egress Gateway.
+
+**Avatar Service**
+- Responsibility: render the VRM, apply emotion/pose, drive lip-sync, run idle behaviour.
+- Boundary: setEmotion(state), setPose, speakWithVisemes(audio + timing), setIdleProfile, setWindowMode. Pure consumer — it renders; it does not decide.
+
+**Desktop Tools / Action Broker**
+- Responsibility: register tools with declared scopes; execute only after approval; log results.
+- Boundary: each tool declares scope + a dry-run description; the Broker requests approval, then executes, then logs. Tools receive scoped handles (e.g. a file handle limited to an approved root), never unrestricted OS access.
+
+**Permission & Consent Service**
+- Responsibility: central policy store for network, filesystem roots, shell, screen, mic, camera, cloud.
+- Boundary: request(scope, context) → decision; grant/revoke; per-scope modes (ask always / once per session / always allow). Revocation takes effect immediately.
+
+**Egress Gateway**
+- Responsibility: the only path to the network.
+- Boundary: send(request, justification) → result. Denies unless a matching consent record exists. Logs every attempt, granted or denied.
+
+**Asset Vault**
+- Responsibility: store generated images/audio/transcripts; provide inspect, save, delete.
+- Boundary: list/read/export/delete. All user data, all local by default.
+
+### Turn flow (Phase 1+)
+
+Input (typed or transcribed) → Orchestrator checks memory settings and retrieves relevant facts → assembles prompt (persona + context + facts) → Model Provider streams response → Orchestrator emits avatar cues (emotion, then visemes as TTS produces audio) → response persisted → optional memory write, gated by consent.
+
+---
+
+## 3. Local vs optional cloud, and privacy implications
+
+| Capability | Default | Cloud option | Privacy implication |
+|---|---|---|---|
+| Chat generation | Local LLM | Optional, per-conversation | Cloud sees the assembled prompt, which may include retrieved memory unless redacted |
+| Embeddings / retrieval | Local | Optional | Sending text to embed leaks content in bulk; keep local by default |
+| Speech-to-text | Local | Optional | Cloud STT means raw audio leaves the device — highest-sensitivity egress |
+| Text-to-speech | Local | Optional | Cloud TTS sends reply text off-device |
+| Avatar & VRM assets | Fully local | None | Assets stay on device; no reason to cloud them |
+| Memory store | Local, encrypted | Optional sync (future) | Sync would move the most private data; default off, per-category |
+| Desktop tools | Local | None | Never delegate OS actions to a cloud service |
+| Image / media generation | Local small model or off | Optional | Prompts can reveal intent; treat as sensitive |
+| Persona/settings sync | Local | Optional | Low sensitivity, but still opt-in |
+| Telemetry | Off | Off | Only ever aggregate and opt-in; never include content |
+
+**Rule of thumb:** if a feature can run locally at acceptable quality, it runs locally and cloud is an explicit, per-request upgrade. The Egress Gateway enforces this at the network boundary rather than relying on UI copy.
+
+---
+
+## 4. Risks, dependencies, and decisions
+
+### Risks
+- **Local model quality vs expectation.** Users may judge the companion by the LLM's wit, which is the one thing LocalCore doesn't control. Mitigate with persona quality and clear model-swap messaging.
+- **VRM performance on low-end hardware.** Lip-sync + idle animation can be expensive; needs a hardware floor and graceful degradation.
+- **"Local" is not "secure."** Local data is still exposed to other apps and to anyone at the keyboard. Encryption at rest and clear UI are required.
+- **Prompt injection through tools and retrieved content.** Tool results and web/memory content must be treated as untrusted data, never as instructions.
+- **Model licensing.** Local models vary in commercial-use terms; the Model Store needs license metadata.
+- **Scope creep into OS automation.** "Help with computer tasks" can expand without limit; Phase 5 must stay scoped and permissioned.
+- **Voice privacy.** Audio is the most sensitive stream; persistence must be off by default and obvious.
+
+### Dependencies
+- Local LLM runtime (node-llama-cpp / llama.cpp / Ollama-class).
+- Local embeddings + a vector index (sqlite-vec / hnswlib class).
+- Local STT (whisper.cpp class) and TTS (Piper / Kokoro class).
+- three.js + VRM loader for the avatar (already present in the project).
+- Windows DPAPI / Electron safeStorage for encryption at rest.
+- A migration story for the existing memory and conversation store.
+
+### Decisions needed from you
+See the questions accompanying this document — summarised here for the record:
+1. Target hardware floor and VRAM/latency budget.
+2. Single companion vs multi-character data model from day one.
+3. Memory capture default (opt-in vs opt-out) and retention defaults.
+4. Voice input model: push-to-talk, wake word, or both.
+5. Cloud posture: strictly optional forever, or recommended hybrid.
+6. Whether CREAO hosts anything at all (see Section 6).
+
+---
+
+## 5. Testable acceptance criteria — summary index
+
+| Phase | Headline test |
+|---|---|
+| 0 | Full chat turn completes with network blocked; no writes outside app-data dir |
+| 1 | 50-turn history survives restart identically; provider swap is non-destructive |
+| 2 | Deleted fact disappears from retrieval within one turn; memory-off writes nothing |
+| 3 | Voice round-trip works hands-free; no audio on disk unless enabled |
+| 4 | Emotions and lip-sync trigger deterministically; within CPU/GPU budget |
+| 5 | Unapproved action blocked; approval shows exact target; audit log complete |
+| 6 | Fresh install performs zero egress; cloud requires explicit, previewed consent |
+
+---
+
+## 6. Existing Electron project vs CREAO-hosted services
+
+### Implementable entirely in the existing Electron project (no CREAO dependency)
+- Phases 0–5 in full: chat, memory, voice, avatar, desktop tools, permissions, asset vault, audit log, local model runtime.
+- The Egress Gateway and Consent store.
+- Encryption at rest, export/delete, and all local UI.
+
+This is the whole product's core. LocalCore can ship and be fully useful with **zero** CREAO-hosted services.
+
+### Requires CREAO-hosted services (only if you want them — all optional)
+- **Model & asset distribution** — a CDN-backed store for model weights and VRM/voice assets.
+- **Account sync** — personas and settings across devices (memory and media excluded by default).
+- **Cloud inference proxy** — a managed path to cloud models, with policy and cost controls.
+- **Character marketplace** — sharing and discovering personas (Phase 6+).
+- **Licensing / entitlement** — if any content is commercial.
+- **Opt-in telemetry aggregation** — never content, only coarse health metrics.
+
+**Boundary rule:** nothing in Phases 0–5 should require a CREAO account. If a feature needs a server, it belongs to Phase 6 and must degrade gracefully to local-only.
+
+---
+
+## 7. Recommended next step
+
+Freeze Phase 0 + Phase 1 scope after you answer the six decisions. Phase 0's egress gateway and app-data layout are the cheapest things to build and the most expensive to retrofit — they should land before any feature work.

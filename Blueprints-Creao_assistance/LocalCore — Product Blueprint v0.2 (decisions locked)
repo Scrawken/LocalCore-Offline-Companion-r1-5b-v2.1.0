@@ -1,0 +1,211 @@
+
+# LocalCore — Product Blueprint (v0.2)
+
+Windows desktop AI companion. Local-first, offline-capable, cloud optional and off by default.
+Fully standalone — no CREAO-hosted services required. Extends the existing Electron project.
+
+---
+
+## 0. Locked decisions
+
+| # | Decision | Choice | Consequence |
+|---|---|---|---|
+| D1 | Memory default | **Opt-out** — remembers by default, user can disable | Safety moves from consent-gating to transparency + one-click control (see §2) |
+| D2 | Companion model | **One companion now**, multi-character-ready schema | Schema carries a `characterId`; UI shows one |
+| D3 | Voice input | **Push-to-talk default**, wake word opt-in | Wake word must be on-device, explicit, and visibly indicated |
+| D4 | Cloud posture | **Optional, off by default** | Enforced at the Egress Gateway, not by UI copy |
+| D5 | Hosting | **None — fully standalone** | No CREAO services; cloud = third-party providers only |
+| D6 | Hardware floor | **Integrated GPU / 8GB RAM, small models** | Drives model class, a resource governor, and realistic latency targets (see §1) |
+
+### Invariants that survive all six decisions
+- No network egress without an explicit, recorded consent event.
+- All conversation, memory, and avatar data stays on device by default.
+- The model is replaceable and addressed only through the Model Provider contract.
+- Generated media is user data with inspect / save / delete controls.
+
+---
+
+## 1. Hardware floor: what 8GB + integrated GPU actually implies
+
+This is the binding constraint on the whole product. Designing for it up front avoids a rewrite.
+
+**Model class**
+- 1–3B parameter instruct models, Q4/Q5 quantized, CPU inference with optional integrated-GPU offload.
+- Context window kept modest (small models degrade and slow down as context grows).
+- Expect weaker instruction-following than cloud models — persona consistency and memory extraction must be engineered around it, not assumed.
+
+**Resource governor (new, mandatory)**
+Running the LLM, the VRM avatar, STT, and TTS at once does not fit in 8GB. One heavy pipeline at a time:
+- Unload/evict the LLM when idle beyond a threshold; reload on next turn.
+- Suspend avatar animation while a model loads; resume after.
+- Serialize voice and generation — never run STT and LLM inference concurrently on the low tier.
+- A tier detector picks quality presets (avatar fps/resolution, model size) from available RAM/VRAM.
+
+**Realistic latency targets (to be measured, not promised)**
+- First token: target under a few seconds on the floor machine; report actuals per hardware tier.
+- Full response: streaming must start early so perceived latency is dominated by first token.
+- Voice round-trip: noticeably slower than cloud; set expectations in the UI.
+
+**Avatar budget**
+- Cap ~30fps, simplified shaders, no post-processing on the low tier.
+- Degrade: drop idle animation before dropping lip-sync; drop lip-sync before dropping chat.
+
+---
+
+## 2. Memory with opt-out default — the safety design
+
+Because memory is **on by default**, privacy rests on the user always being able to see and undo what was remembered. Required controls:
+
+- **Persistent memory indicator** — always visible whenever memory is active.
+- **"What I remember" panel** — one click away at all times, listing every stored fact with its source turn.
+- **One-click wipe-all** and per-item delete; wipe takes effect within one turn.
+- **Clear first-run disclosure** — memory is on, it is local, here is how to turn it off — before any capture.
+- **Retention policy** — a default window after which entries are pruned or rolled into summaries (window TBD, see open items).
+- **Memory write log** — a visible record of what was captured and when, so the store is never a mystery.
+- **Disable switch** — stops writes and injection immediately, no restart required.
+
+Honest framing: local opt-out memory is a reasonable default *because* it never leaves the device and is fully reversible. The design must make that reversibility obvious, not hidden in settings.
+
+---
+
+## 3. Phased MVP plan (updated)
+
+### Phase 0 — Foundation & guardrails
+Deliverables: Egress Gateway; Consent store (default deny for network); app-data layout with no-writes-outside guarantee; crash/restart persistence; **resource governor skeleton**.
+Acceptance:
+- Full chat turn completes with all outbound network blocked — no crash, no retry storm.
+- No writes outside the app-data dir across a full session (filesystem watcher).
+- A network call without a consent record is blocked and logged.
+- Resource governor can unload and reload the model without losing conversation state.
+
+### Phase 1 — Reliable character & chat
+Deliverables: persona definition; streaming chat with cancel; conversation persistence/search/delete; **two swappable model providers** (at least one low-tier local model); context assembly.
+Acceptance:
+- 50-turn session survives restart with identical history and order.
+- Provider swap mid-session does not corrupt history.
+- Cancel mid-stream leaves no partial turn; next turn clean.
+- First-token and full-response latency measured and reported per hardware tier.
+- Deleting a conversation removes rows and derived summaries; second delete is a no-op.
+
+### Phase 2 — Memory (opt-out) you control
+Deliverables: session buffer → rolling summary → long-term facts; encrypted local store; local embeddings + vector index; the transparency controls in §2.
+Acceptance:
+- First run discloses memory-on before any capture; indicator always visible.
+- "What I remember" lists every fact with a traceable source turn.
+- Wipe-all clears facts and summaries within one turn; retrieval then returns nothing.
+- Retention policy enforced; expired entries pruned or summarized.
+- Disabling memory stops writes and injection immediately.
+- Store encrypted at rest (Windows DPAPI / safeStorage).
+
+### Phase 3 — Voice
+Deliverables: push-to-talk STT; TTS with stop/barge-in; always-visible mic indicator; **wake word as opt-in, on-device only**.
+Acceptance:
+- Push-to-talk round-trip works hands-free.
+- TTS interruptible mid-sentence; companion reacts correctly.
+- Mic indicator visible whenever the mic is open; mute immediate.
+- Wake word is off by default, requires explicit opt-in, runs on-device, and shows an active-listening indicator when armed.
+- No audio persisted unless the user explicitly enables it.
+- Voice + LLM serialize correctly on the low tier (governor verified).
+
+### Phase 4 — Avatar expressiveness
+Deliverables: emotion states; lip-sync from TTS; idle animation/blink; window modes (full / overlay / tray-only).
+Acceptance:
+- Emotions trigger deterministically from a test harness.
+- Lip-sync tracks TTS amplitude; mouth closes on silence.
+- Idle animation starts after a configurable period, stops on interaction.
+- Rendering stays within the stated low-tier budget (~30fps target).
+- Tray-only mode still supports chat and voice.
+
+### Phase 5 — Desktop tools with permissions
+Deliverables: tool registry with declared scopes; Action Broker; approval UX showing exact target/command/diff; scoped filesystem roots; audit log.
+Acceptance:
+- Unapproved action is blocked, not executed, and surfaced.
+- Approval dialog shows the exact command/path/diff.
+- "Allow once / session / always" behave distinctly and are revocable.
+- Revoking a scope stops the tool immediately, mid-session.
+- Every consequential action is in the audit log with a matching result.
+- Destructive actions never proceed on a single implicit approval.
+
+### Phase 6 — Optional third-party cloud (no CREAO)
+Deliverables: explicit cloud enablement (off by default); per-request consent with redaction preview; cloud providers behind the same Model Provider contract; **no account, no CREAO services**.
+Acceptance:
+- Fresh install performs zero network egress (verified at OS level).
+- Enabling cloud requires an explicit toggle plus acknowledgment.
+- Each cloud call previews exactly what would be sent.
+- Disabling cloud returns to fully local with no residual calls.
+
+---
+
+## 4. Component architecture (unchanged core, governor added)
+
+- **Presentation** — chat, avatar window, tray, settings, permission dialogs.
+- **Companion Core (Orchestrator)** — owns a turn end-to-end.
+- **Capability services** — Model Provider, Memory, Voice, Avatar, Desktop Tools. No service calls another directly.
+- **Platform services** — Permission & Consent, Egress Gateway, Asset Vault, Audit Log, **Resource Governor**.
+- **Foundation** — Electron main/renderer, local storage, OS keychain/DPAPI.
+
+Invariants: single egress choke point; services communicate only through the Orchestrator; every capability declares its requirements; the model is replaceable.
+
+Contracts: Model Provider (stream + embeddings + capabilities descriptor), Memory (write/retrieve/list/edit/delete/export/wipe + per-category enable), Voice (transcribe / synthesize with viseme timing), Avatar (setEmotion/setPose/speakWithVisemes/setIdleProfile/setWindowMode), Desktop Tools (declare scope, dry-run description, approval, execute, log), Permission & Consent (request/grant/revoke, immediate effect), Egress Gateway (send + justification, deny-by-default), Resource Governor (acquire/release pipelines, evict idle).
+
+Turn flow: input → memory check + retrieval → prompt assembly → streamed generation → avatar cues + optional TTS → persist → memory write (unless disabled) → audit.
+
+---
+
+## 5. Local vs cloud matrix (updated for opt-out memory)
+
+| Capability | Default | Cloud option | Privacy implication |
+|---|---|---|---|
+| Chat generation | Local (small model) | Optional, per-conversation | Cloud sees assembled prompt incl. memory unless redacted |
+| Embeddings / retrieval | Local | Optional | Bulk text egress; keep local |
+| Memory store | **Local, on by default, encrypted** | None (no sync — standalone) | Never leaves device; safety via transparency + wipe |
+| Speech-to-text | Local | Optional | Cloud STT sends raw audio — highest sensitivity |
+| Wake word | Local, on-device, opt-in | None | Always-listening must be explicit + indicated |
+| Text-to-speech | Local | Optional | Cloud TTS sends reply text |
+| Avatar & VRM assets | Fully local | None | No reason to cloud |
+| Desktop tools | Local | None | Never delegate OS actions to cloud |
+| Image / media generation | Local small model or off | Optional | Prompts can reveal intent |
+| Telemetry | Off | Off | Opt-in, aggregate only, never content |
+
+---
+
+## 6. Standalone vs CREAO-hosted
+
+**Decision D5: fully standalone. Nothing requires CREAO.**
+
+| Capability | Where it runs |
+|---|---|
+| Chat, memory, voice, avatar, desktop tools, permissions, asset vault | Local Electron app |
+| Model weights & VRM assets | Bundled or user-downloaded; no CREAO distribution |
+| Optional cloud inference | Third-party provider, gated by Egress Gateway |
+| Account sync / marketplace | **Not offered** — no server dependency |
+
+The entire product, Phases 0–6, can ship with no server component. Any future hosted feature would be additive and must degrade to local-only.
+
+---
+
+## 7. Risks (re-ranked for the locked decisions)
+
+1. **Low hardware floor (top risk).** 8GB + integrated GPU may not run LLM + avatar + voice concurrently. Mitigation: resource governor, serialization, quality tiers. This must be prototyped in Phase 0, not assumed.
+2. **Weak small-model behavior.** Persona consistency and memory extraction will be rough at 1–3B. Mitigation: constrained extraction, structured memory formats, good persona engineering.
+3. **Opt-out memory reputation.** Remembering by default is a trust risk if users feel surprised. Mitigation: first-run disclosure, permanent indicator, one-click wipe.
+4. **Wake word privacy.** Always-listening invites scrutiny. Mitigation: off by default, on-device, visible armed indicator.
+5. **Prompt injection via tools/retrieved content.** Treat all retrieved/tool content as untrusted data.
+6. **Model licensing.** Ship license metadata with every bundled/downloadable model.
+7. **Scope creep into OS automation.** Keep Phase 5 scoped and permissioned.
+
+---
+
+## 8. Open items needing your input
+
+- Retention window for opted-out memory (keep until deleted / rolling window / summarize-and-prune).
+- What memory captures by default: facts only, or full transcripts too.
+- Acceptable first-token latency on the floor machine (defines model size ceiling).
+- Whether wake word ships in Phase 3 or is deferred to a later phase.
+- Whether 8GB/integrated is a hard floor or a "should work" target.
+
+---
+
+## 9. Recommended next step
+
+Freeze Phase 0 scope now. Build the Egress Gateway, app-data layout, and **a resource-governor prototype that proves LLM + avatar + voice can coexist on an 8GB integrated machine**. That prototype de-risks the single biggest unknown in the plan before any feature work.

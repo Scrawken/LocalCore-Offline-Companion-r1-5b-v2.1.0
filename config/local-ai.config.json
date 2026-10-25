@@ -1,0 +1,100 @@
+{
+  "appVersion": "2.0.0",
+  "generatedAt": "2026-10-16T09:19:51.187Z",
+  "os": "windows",
+  "activeModel": {
+    "id": "dolphin3-llama3.1-8b-q4_k_m",
+    "name": "Dolphin 3.0 Llama 3.1 8B",
+    "parameterCount": "8B",
+    "quantization": "Q4_K_M",
+    "contextLength": 4096,
+    "sha256": "268390e07edd407ad93ea21a868b7ae995b5950e01cad0db9e1802ae5049d405",
+    "fileName": "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf",
+    "relativePath": "models/chat/Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf",
+    "setupCommand": "setup:chat-model",
+    "license": "Meta Llama 3.1 Community License",
+    "note": "Current implementation. Will be parameterized as floor.model after Phase 0 S0.4 spike determines optimal model (target: Qwen2.5-3B-Instruct Q4_K_M or Qwen2.5-1.5B-Instruct Q4_K_M per Phase 1 §0.1)"
+  },
+  "hardware": {
+    "backend": "cuda",
+    "gpuOffloadLayers": 99,
+    "lowMemoryMode": true,
+    "kvCacheQuantization": true,
+    "flashAttention": true,
+    "maxContextTokens": 4096,
+    "numThreads": 8,
+    "mmapEnabled": true,
+    "unloadIdleMinutes": 15
+  },
+  "libraries": {
+    "includeLlamaCpp": true,
+    "includeOnnxRuntime": true,
+    "includeTransformersJs": false,
+    "includeWhisperCpp": true,
+    "includeVectorEmbeddings": true,
+    "stripUnusedSymbols": true,
+    "pruneArchBinaries": true,
+    "compactWeightsQuant": true
+  },
+  "reasoning": {
+    "enabled": false,
+    "delimiters": "",
+    "maxReasoningTokens": 0,
+    "streamReasoningToUi": false,
+    "stripReasoningBeforeOutput": false,
+    "logReasoningTraces": false,
+    "reasoningSpecialization": "general-assistant",
+    "systemPromptCoT": ""
+  },
+  "autoInstall": {
+    "installType": "desktop-app",
+    "autoDetectGpu": true,
+    "preflightChecks": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "startOnBoot": false,
+    "silentMode": false,
+    "customInstallPath": "",
+    "targetPort": 11434,
+    "registerProtocolHandler": true
+  },
+  "capabilities": {
+    "selectedModalities": [
+      "text_reasoning",
+      "image_generation",
+      "music_audio",
+      "video_generation",
+      "image_understanding",
+      "speech_input"
+    ],
+    "userGoalDescription": "I want an offline chat generator that of which AI avatars can generate images and communicate via text, audio call, and video call.",
+    "imageModel": "FLUX.1-schnell-Q4",
+    "musicModel": "MusicGen-small-Q8",
+    "videoModel": "SVD-XT-1.1",
+    "visionModel": "Qwen2.5-VL-3B-Instruct-Q4_K_M",
+    "visionModelStatus": "INTEGRATED_ON_DEMAND",
+    "speechRecognitionModel": "Whisper small.en",
+    "speechRecognitionStatus": "PUSH_TO_TALK",
+    "speechSynthesisModel": "Piper en_US-lessac-medium",
+    "speechSynthesisStatus": "OPT_IN_AUTOPLAY",
+    "textModel": "dolphin3-llama3.1-8b-q4_k_m",
+    "autoFormatFolders": true,
+    "unifiedMultimodalApi": true
+  },
+  "privacy": {
+    "airGapMode": true,
+    "piiScrubbing": true,
+    "zeroRetention": false,
+    "ephemeralMemory": true,
+    "localAuditLog": true,
+    "outboundFirewallRule": "DROP_ALL_EXTERNAL"
+  },
+  "paths": {
+    "modelsDirectory": "%APPDATA%\\LocalCore\\models",
+    "localModelsDirectory": "models",
+    "runtimeDirectory": "runtime",
+    "executable": "LocalCore AI.exe",
+    "installer": "LocalCore-AI-Setup-1.2.0.exe",
+    "outputDirectory": "output"
+  }
+}

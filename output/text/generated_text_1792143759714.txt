@@ -1,0 +1,38 @@
+Loading model... 
+
+▄▄ ▄▄
+██ ██
+██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄
+██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██
+██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀
+                                    ██    ██
+                                    ▀▀    ▀▀
+
+build      : b11580-4413a1924
+model      : C:\Projects\localcore-offline-windows-deepseek-r1-1.5b-v2.1.0\models\chat\Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf
+ftype      : Q4_K - Medium
+modalities : text
+
+available commands:
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+
+
+
+> Verify offline inference pipeline
+To verify an offline inference pipeline, you need to ensure that the pipeline is able to accurately process input data and produce the expected output, without relying on real-time data or online services. Here are some steps to verify an offline inference pipeline:
+
+1. Define the expected output: Clearly define what the expected output should be for a given input. This will help you determine if the pipeline is functioning correctly.
+
+2. Test with sample inputs: Run the pipeline with a variety of sample inputs to verify that it produces the expected output for different scenarios.
+
+3. Validate data handling: Verify that the pipeline correctly handles data input, including data formats, size
+
+[ Prompt: 25.5 t/s | Generation: 5.7 t/s ]
+
+> 
+
+Exiting...

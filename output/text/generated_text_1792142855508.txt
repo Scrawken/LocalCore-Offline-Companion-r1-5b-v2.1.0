@@ -1,0 +1,32 @@
+Loading model... 
+
+▄▄ ▄▄
+██ ██
+██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄
+██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██
+██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀
+                                    ██    ██
+                                    ▀▀    ▀▀
+
+build      : b11580-4413a1924
+model      : C:\Projects\localcore-offline-windows-deepseek-r1-1.5b-v2.1.0\models\chat\Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf
+ftype      : Q4_K - Medium
+modalities : text
+
+available commands:
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+
+
+
+> What is 2 plus 2? Answer in one short sentence.
+2 plus 2 equals 4.
+
+[ Prompt: 24.1 t/s | Generation: 5.5 t/s ]
+
+> 
+
+Exiting...

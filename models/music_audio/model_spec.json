@@ -1,0 +1,6 @@
+{
+  "name": "MusicGen Small AudioCraft",
+  "sampleRate": 32000,
+  "channels": 1,
+  "format": "PCM16 WAV"
+}

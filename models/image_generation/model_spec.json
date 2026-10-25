@@ -1,0 +1,10 @@
+{
+  "name": "FLUX.1 Schnell ONNX DirectML",
+  "architecture": "Flow Matching Transformer",
+  "quantization": "Q4",
+  "optimalSteps": 8,
+  "defaultResolution": [
+    512,
+    512
+  ]
+}

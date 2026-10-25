@@ -1,0 +1,212 @@
+==========================================
+
+LocalCore — Git Ignore
+
+==========================================
+--- Environment variables and secrets ---
+
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.test
+*.pem
+*.key
+.p12
+.pfx
+secrets/
+secrets.
+credentials.json
+service-account.json
+-service-account.json
+
+--- Node.js dependencies ---
+
+node_modules/
+**/node_modules/
+
+--- Build outputs ---
+
+dist/
+dist-electron/
+build/
+out/
+release/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+--- Vite / frontend caches ---
+
+.vite/
+**/.vite/
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+
+--- Electron packaging ---
+
+electron-builder.yml.bak
+electron-builder-debug.yml
+*.asar
+*.blockmap
+*.dmg
+*.exe
+*.msi
+*.appx
+*.deb
+*.rpm
+*.AppImage
+*.snap
+
+--- Local application data ---
+
+app-data/
+user-data/
+userdata/
+local-data/
+runtime-data/
+instance-data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+--- Logs and temporary files ---
+
+logs/
+.log
+npm-debug.log
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.swp
+*.swo
+*~
+
+--- Python ---
+
+pycache/
+**/pycache/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+htmlcov/
+pip-wheel-metadata/
+
+--- Downloaded AI models and large model weights ---
+
+Keep model specifications, manifests, READMEs, and source code.
+
+Ignore common downloaded weight formats.
+
+*.gguf
+*.ggml
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.engine
+*.plan
+*.tflite
+*.mlmodel
+*.coreml
+*.bin
+
+Common model cache directories
+
+models/cache/
+models/downloads/
+models/weights/
+models/checkpoints/
+models/loras/
+models/controlnet/
+huggingface-cache/
+.cache/huggingface/
+.cache/torch/
+.cache/transformers/
+.cache/whisper/
+
+--- Generated AI media ---
+
+generated/
+generated-images/
+generated-audio/
+generated-video/
+outputs/
+ComfyUI/output/
+ComfyUI/temp/
+ComfyUI/input/
+
+--- Local AI services ---
+
+ollama-data/
+ollama-models/
+comfyui-data/
+
+--- Package managers ---
+
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+
+--- IDE and operating system ---
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+--- Electron / Chromium runtime artifacts ---
+
+GPUCache/
+DawnCache/
+ShaderCache/
+GrShaderCache/
+Code Cache/
+Crashpad/
+Crash Reports/
+
+--- Backups and archives ---
+
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.iso
+
+# Oversized CUDA runtime binary
+/runtime/llama-cuda/ggml-cuda.dll
+
+# Blender backup files
+*.blend1
+
+--- Preserve intentional project documentation ---
+
+Markdown files, source files, blueprints, manifests,
+
+package.json, lockfiles, and configuration templates
+
+are intentionally NOT ignored by these rules.

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.5",
+  "lastUpdated": "2026-10-16T09:19:51.187Z",
+  "defaultModelId": "dolphin3-llama3.1-8b-q4_k_m",
+  "runtime": {
+    "requiredEngine": "Windows x64 llama.cpp",
+    "binary": "runtime/llama-cuda/llama-server.exe",
+    "dlls": [
+      "llama.dll",
+      "ggml.dll",
+      "ggml-base.dll",
+      "ggml-cpu.dll"
+    ],
+    "status": "INSTALLED (CUDA 12.4)"
+  },
+  "models": [
+    {
+      "id": "dolphin3-llama3.1-8b-q4_k_m",
+      "name": "Dolphin 3.0 Llama 3.1 8B Q4_K_M",
+      "canonicalName": "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf",
+      "parameterCount": "8B",
+      "architecture": "Llama 3.1",
+      "quantization": "Q4_K_M",
+      "sizeBytes": 4920749472,
+      "sha256": "268390e07edd407ad93ea21a868b7ae995b5950e01cad0db9e1802ae5049d405",
+      "revision": "a6274707ba8c5f12d4521eabbce1b318bb2f27f5",
+      "appDataTarget": "%APPDATA%\\LocalCore\\models\\Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf",
+      "localFilename": "models/chat/Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf",
+      "downloadUrl": "https://huggingface.co/bartowski/Dolphin3.0-Llama3.1-8B-GGUF/resolve/a6274707ba8c5f12d4521eabbce1b318bb2f27f5/Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf",
+      "license": "Meta Llama 3.1 Community License",
+      "verified": true
+    }
+  ]
+}

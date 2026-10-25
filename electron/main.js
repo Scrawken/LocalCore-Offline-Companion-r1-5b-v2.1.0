@@ -1,0 +1,290 @@
+const { app, BrowserWindow, session, ipcMain } = require('electron');
+const path = require('path');
+const { spawn } = require('child_process');
+const crypto = require('crypto');
+const { createLocalMemoryStore } = require('./local-memory-store.js');
+const { createAvatarStore } = require('./avatar-store.js');
+const { analyzeImage } = require('../engine/local-vision.js');
+const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
+const activeModelId = require('../config/local-ai.config.json').activeModel.id;
+
+// Phase 0 components
+const { ensureAppDataStructure } = require('./app-data-layout.js');
+const { createEgressGateway } = require('./egress-gateway.js');
+const { createResourceGovernor } = require('./resource-governor.js');
+const { createTierDetector } = require('./tier-detector.js');
+const { setResourceGovernor } = require('../engine/llama-cpp-provider.js');
+
+let daemonProcess = null;
+let mainWindow = null;
+let memoryStore = null;
+let egressGateway = null;
+let resourceGovernor = null;
+let tierDetector = null;
+const modelApiKey = crypto.randomBytes(32).toString('hex');
+
+function registerMemoryHandlers() {
+  ipcMain.handle('memory:load', () => memoryStore.getSnapshot());
+  ipcMain.handle('memory:create-conversation', () => memoryStore.createConversation());
+  ipcMain.handle('memory:append-message', (_event, conversationId, role, content) =>
+    memoryStore.appendMessage(conversationId, role, content));
+  ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
+    memoryStore.setRememberEnabled(enabled));
+  ipcMain.handle('memory:save-asset', (_event, conversationId, type, prompt, bytes, details) => {
+    if (!(bytes instanceof Uint8Array)) throw new Error('Generated content must be sent as bytes.');
+    return memoryStore.saveAsset(conversationId, type, prompt, Buffer.from(bytes), details);
+  });
+  ipcMain.handle('memory:read-asset', (_event, assetId) => memoryStore.readAsset(assetId));
+  ipcMain.handle('memory:delete-conversation', (_event, conversationId) =>
+    memoryStore.deleteConversation(conversationId));
+}
+
+function registerAvatarHandlers() {
+  const avatarStore = createAvatarStore(
+    path.join(app.getPath('userData'), 'avatar'),
+    path.join(__dirname, '../models/avatar/LocalCore-Core.vrm')
+  );
+  ipcMain.handle('avatar:save', async (event, bytes, name) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Avatar storage is only available to the LocalCore window.');
+    return avatarStore.save(bytes, name);
+  });
+  ipcMain.handle('avatar:load', async (event, id) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Avatar storage is only available to the LocalCore window.');
+    return avatarStore.load(id);
+  });
+  ipcMain.handle('avatar:list', async event => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Avatar storage is only available to the LocalCore window.');
+    return avatarStore.list();
+  });
+  ipcMain.handle('avatar:select', async (event, id) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Avatar storage is only available to the LocalCore window.');
+    return avatarStore.select(id);
+  });
+}
+
+function registerInferenceHandlers() {
+  ipcMain.handle('inference:model-id', () => activeModelId);
+  ipcMain.handle('inference:status', async () => {
+    try {
+      // Phase 0 S0.3: Route through Egress Gateway for audit/consent
+      const response = await egressGateway.request({
+        method: 'GET',
+        url: 'http://127.0.0.1:11434/v1/models',
+        headers: { Authorization: 'Bearer ' + modelApiKey },
+        scope: 'network:local-inference',
+        dataCategory: 'none',
+        timeoutMs: 2500
+      });
+      
+      if (!response.ok) return { ready: false, message: 'Local model server returned HTTP ' + response.status };
+      return { ready: true, model: response.body?.data?.[0]?.id || 'Local model' };
+    } catch {
+      return { ready: false, message: 'Model is loading or setup is required.' };
+    }
+  });
+
+  ipcMain.handle('inference:chat', async (_event, messages) => {
+    if (!Array.isArray(messages) || messages.length === 0 || messages.length > 40) {
+      throw new Error('The chat request must contain between 1 and 40 messages.');
+    }
+    for (const message of messages) {
+      if (!message || !['system', 'user', 'assistant'].includes(message.role) ||
+          typeof message.content !== 'string' || message.content.length > 16_000) {
+        throw new Error('The chat request contains an invalid message.');
+      }
+    }
+    
+    // Phase 0 S0.3: Route through Egress Gateway for audit/consent
+    const response = await egressGateway.request({
+      method: 'POST',
+      url: 'http://127.0.0.1:11434/v1/chat/completions',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + modelApiKey
+      },
+      payload: { model: activeModelId, messages, max_tokens: 512, temperature: 0.7 },
+      scope: 'network:local-inference',
+      dataCategory: 'conversation',
+      timeoutMs: 5 * 60 * 1000
+    });
+    
+    if (!response.ok) {
+      const bodyText = response.body ? JSON.stringify(response.body) : '';
+      throw new Error('Local model request failed (HTTP ' + response.status + '): ' + bodyText.slice(0, 500));
+    }
+    const content = response.body?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('The local model returned an empty response.');
+    }
+    return { content, model: response.body?.model || activeModelId };
+  });
+
+  ipcMain.handle('inference:vision', (_event, question, imageBytes, mimeType) =>
+    analyzeImage(question, imageBytes, mimeType));
+  ipcMain.handle('inference:transcribe', (_event, audioBytes) => transcribeAudio(audioBytes));
+  ipcMain.handle('inference:speak', (_event, text) => synthesizeSpeech(text));
+}
+
+/**
+ * Phase 0: Register Egress Gateway IPC handlers
+ */
+function registerEgressHandlers() {
+  const consentService = egressGateway.getConsentService();
+  const auditLog = egressGateway.getAuditLog();
+
+  // Consent operations
+  ipcMain.handle('egress:consent:get', (_event, scope) => consentService.get(scope));
+  ipcMain.handle('egress:consent:set', async (_event, record) => await consentService.set(record));
+  ipcMain.handle('egress:consent:revoke', async (_event, scope) => await consentService.revoke(scope));
+  ipcMain.handle('egress:consent:revoke-personal-data', async (_event, scope) => await consentService.revokePersonalData(scope));
+  ipcMain.handle('egress:consent:list', () => consentService.list());
+
+  // Audit log operations
+  ipcMain.handle('egress:audit:read', (_event, options) => auditLog.read(options));
+  ipcMain.handle('egress:audit:prune', async () => await auditLog.prune());
+  ipcMain.handle('egress:audit:clear', async () => await auditLog.clear());
+  ipcMain.handle('egress:audit:stats', () => auditLog.stats());
+  ipcMain.handle('egress:audit:set-retention', (_event, days) => auditLog.setRetentionDays(days));
+  ipcMain.handle('egress:audit:get-retention', () => auditLog.getRetentionDays());
+
+  // Gateway operations
+  ipcMain.handle('egress:request', async (_event, req) => await egressGateway.request(req));
+  ipcMain.handle('egress:check', async (_event, req) => await egressGateway.check(req));
+  ipcMain.handle('egress:preview', (_event, req) => egressGateway.preview(req));
+}
+
+/**
+ * Phase 0 S0.2: Register Resource Governor IPC handlers
+ */
+function registerGovernorHandlers() {
+  // Governor operations
+  ipcMain.handle('governor:acquire', async (_event, kind, opts) => await resourceGovernor.acquire(kind, opts));
+  ipcMain.handle('governor:release', (_event, lease) => resourceGovernor.release(lease));
+  ipcMain.handle('governor:evict', (_event, leaseId) => resourceGovernor.evict(leaseId));
+  ipcMain.handle('governor:evict-idle', async () => await resourceGovernor.evictIdle());
+  ipcMain.handle('governor:update-memory', (_event, kind, mb) => resourceGovernor.updateResidentMemory(kind, mb));
+  ipcMain.handle('governor:set-profile', (_event, profile) => resourceGovernor.setProfile(profile));
+  ipcMain.handle('governor:stats', () => resourceGovernor.stats());
+
+  // Tier detector operations
+  ipcMain.handle('tier:detect', () => tierDetector.detectTier());
+  ipcMain.handle('tier:get-profile', () => tierDetector.getProfile());
+  ipcMain.handle('tier:system-info', () => tierDetector.getSystemInfo());
+}
+
+async function startDaemon() {
+  // Phase 0 S0.3: Acquire LLM lease before starting daemon
+  const { PipelineKind } = require('./resource-governor');
+  let llmLease = null;
+
+  try {
+    console.log('[Phase 0 S0.3] Acquiring LLM lease...');
+    llmLease = await resourceGovernor.acquire(PipelineKind.LLM, { priority: 10, timeoutMs: 60000 });
+    
+    if (llmLease.degraded) {
+      console.warn('[Phase 0 S0.3] LLM lease degraded - resource pressure detected');
+    } else {
+      console.log('[Phase 0 S0.3] LLM lease acquired:', llmLease.id);
+    }
+  } catch (error) {
+    console.error('[Phase 0 S0.3] Failed to acquire LLM lease:', error.message);
+    // Continue anyway - governor will handle pressure
+  }
+
+  const daemonScript = path.join(__dirname, '../engine/local-inference-daemon.js');
+  daemonProcess = spawn('node', [daemonScript, '--port', '11434'], {
+    windowsHide: true,
+    env: { 
+      ...process.env, 
+      LOCALCORE_API_KEY: modelApiKey,
+      LOCALCORE_LEASE_ID: llmLease?.id || ''
+    }
+  });
+  
+  daemonProcess.stdout.on('data', data => console.log('[LOCAL MODEL]', data.toString().trim()));
+  daemonProcess.stderr.on('data', data => console.error('[LOCAL MODEL]', data.toString().trim()));
+  daemonProcess.on('error', error => console.error('[LOCAL MODEL] Failed to start:', error.message));
+  daemonProcess.on('close', code => {
+    if (code !== 0 && code !== null) console.error('[LOCAL MODEL] Server exited with code', code);
+    // Release lease on daemon exit
+    if (llmLease) {
+      resourceGovernor.release(llmLease);
+      console.log('[Phase 0 S0.3] LLM lease released on daemon exit');
+    }
+  });
+
+  // Track lease for later release
+  daemonProcess.llmLease = llmLease;
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    title: "LocalCore AI - Complete Offline Desktop Studio",
+    backgroundColor: '#0b0f19',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      sandbox: true,
+      contextIsolation: true
+    }
+  });
+
+  // Strict air-gap firewall: drop all non-local connections
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    const u = details.url;
+    if (u.startsWith('file://') || u.startsWith('http://localhost') || u.startsWith('http://127.0.0.1') || u.startsWith('devtools:')) {
+      callback({ cancel: false });
+    } else {
+      console.warn('[AIR-GAP BLOCKED]', u);
+      callback({ cancel: true });
+    }
+  });
+
+  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+}
+
+app.whenReady().then(() => {
+  // Phase 0: Initialize app-data structure
+  ensureAppDataStructure();
+
+  // Phase 0: Initialize Egress Gateway
+  egressGateway = createEgressGateway();
+
+  // Phase 0 S0.2: Initialize Resource Governor and Tier Detector
+  resourceGovernor = createResourceGovernor();
+  tierDetector = createTierDetector();
+
+  // Set profile based on detected tier
+  const tierProfile = tierDetector.getProfile();
+  resourceGovernor.setProfile(tierProfile);
+  console.log('[Phase 0] Detected tier:', tierProfile.tier, 'Profile:', tierProfile);
+
+  // Wire governor to ModelProvider
+  setResourceGovernor(resourceGovernor);
+
+  // Initialize memory store (legacy, will be refactored in Phase 2)
+  memoryStore = createLocalMemoryStore(path.join(app.getPath('userData'), 'memory'), activeModelId);
+
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const requestedMedia = details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    const supportedMediaRequest = webContents === mainWindow?.webContents &&
+      permission === 'media' &&
+      requestedMedia.length === 1 &&
+      (requestedMedia[0] === 'audio' || requestedMedia[0] === 'video');
+    callback(supportedMediaRequest);
+  });
+
+  registerMemoryHandlers();
+  registerAvatarHandlers();
+  registerInferenceHandlers();
+  registerEgressHandlers(); // Phase 0
+  registerGovernorHandlers(); // Phase 0 S0.2
+  startDaemon();
+  createWindow();
+});
+
+app.on('window-all-closed', () => {
+  if (daemonProcess) daemonProcess.kill();
+  if (process.platform !== 'darwin') app.quit();
+});
