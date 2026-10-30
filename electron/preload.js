@@ -30,6 +30,23 @@ contextBridge.exposeInMainWorld('localCore', {
     modelId: () => ipcRenderer.invoke('inference:model-id'),
     status: () => ipcRenderer.invoke('inference:status'),
     chat: messages => ipcRenderer.invoke('inference:chat', messages),
+    chatStream: (messages, streamId) => ipcRenderer.invoke('inference:chat-stream', messages, streamId),
+    chatCancel: streamId => ipcRenderer.invoke('inference:chat-cancel', streamId),
+    onChatToken: handler => {
+      const listener = (_event, data) => handler(data);
+      ipcRenderer.on('inference:chat-token', listener);
+      return () => ipcRenderer.removeListener('inference:chat-token', listener);
+    },
+    onChatEnd: handler => {
+      const listener = (_event, data) => handler(data);
+      ipcRenderer.on('inference:chat-end', listener);
+      return () => ipcRenderer.removeListener('inference:chat-end', listener);
+    },
+    onChatError: handler => {
+      const listener = (_event, data) => handler(data);
+      ipcRenderer.on('inference:chat-error', listener);
+      return () => ipcRenderer.removeListener('inference:chat-error', listener);
+    },
     analyzeImage: (question, imageBytes, mimeType) =>
       ipcRenderer.invoke('inference:vision', question, imageBytes, mimeType),
     transcribeAudio: audioBytes => ipcRenderer.invoke('inference:transcribe', audioBytes),

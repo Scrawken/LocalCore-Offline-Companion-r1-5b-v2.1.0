@@ -177,6 +177,19 @@ function createChatEngine(provider, options = {}) {
       return activeController !== null;
     },
 
+    /**
+     * Seed prior conversation context without streaming. Used when the engine
+     * wraps an existing transcript (e.g. the streaming IPC path). Each message
+     * becomes a complete turn so toProviderMessages() includes it.
+     */
+    seedContext(messages) {
+      for (const m of messages) {
+        if (!m || !['system', 'user', 'assistant'].includes(m.role)) continue;
+        const turn = addTurn(m.role, 'complete');
+        turn.text = typeof m.content === 'string' ? m.content : '';
+      }
+    },
+
     /** Clear all turns (new session). */
     reset() {
       if (activeController) activeController.abort();

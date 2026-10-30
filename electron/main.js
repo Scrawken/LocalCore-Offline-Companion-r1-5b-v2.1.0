@@ -7,6 +7,8 @@ const { createAvatarStore } = require('./avatar-store.js');
 const { createPersonaStore } = require('./persona-store.js');
 const { createSafeStorageCrypto } = require('./safe-storage-crypto.js');
 const { createMemoryFactsStore } = require('./memory-facts-store.js');
+const { createChatEngine } = require('../engine/chat-engine.js');
+const { createAttachedLlamaProvider } = require('../engine/attached-llama-provider.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -166,6 +168,60 @@ function registerInferenceHandlers() {
       throw new Error('The local model returned an empty response.');
     }
     return { content, model: response.body?.model || activeModelId };
+  });
+
+  // Phase 1 streaming chat (opt-in): ChatEngine over an attached provider bound
+  // to the app's existing inference server. Tokens stream to the renderer via
+  // 'inference:chat-token' events keyed by streamId. The persona system prompt
+  // is prepended here too, same as the non-streaming path.
+  const attachedProvider = createAttachedLlamaProvider({
+    baseUrl: 'http://127.0.0.1:11434',
+    apiKey: modelApiKey,
+    modelId: activeModelId
+  });
+  const chatEngines = new Map(); // streamId -> engine
+
+  ipcMain.handle('inference:chat-stream', async (event, messages, streamId) => {
+    if (!Array.isArray(messages) || messages.length === 0 || messages.length > 40) {
+      throw new Error('The chat request must contain between 1 and 40 messages.');
+    }
+    if (!streamId) throw new Error('A streamId is required.');
+    const sender = event.sender;
+    const engine = createChatEngine(attachedProvider, { modelId: activeModelId, maxTokens: 512, temperature: 0.7 });
+    chatEngines.set(streamId, engine);
+
+    const personaSystemPrompt = personaStore.getActiveSystemPrompt();
+    const nonSystem = messages.filter(m => m.role !== 'system');
+    const extraSystem = messages.filter(m => m.role === 'system' && !/You are (LocalCore|Maura)/.test(m.content));
+    const finalMessages = [
+      { role: 'system', content: personaSystemPrompt },
+      ...extraSystem,
+      ...nonSystem
+    ];
+
+    engine.subscribe(evt => {
+      if (evt.type === 'token') {
+        sender.send('inference:chat-token', { streamId, text: evt.text });
+      } else if (evt.type === 'turn-end') {
+        sender.send('inference:chat-end', { streamId, status: evt.turn.status, text: evt.turn.text });
+      } else if (evt.type === 'error') {
+        sender.send('inference:chat-error', { streamId, message: evt.message });
+      }
+    });
+
+    // Seed prior context (system + earlier turns), then stream the last user turn.
+    const lastUserIndex = finalMessages.map(m => m.role).lastIndexOf('user');
+    const prior = lastUserIndex > 0 ? finalMessages.slice(0, lastUserIndex) : finalMessages.filter(m => m.role === 'system');
+    const lastUser = lastUserIndex >= 0 ? finalMessages[lastUserIndex] : null;
+    engine.seedContext(prior);
+    const turn = await engine.send(lastUser ? lastUser.content : '');
+    chatEngines.delete(streamId);
+    return { status: turn.status, text: turn.text };
+  });
+
+  ipcMain.handle('inference:chat-cancel', (_event, streamId) => {
+    const engine = chatEngines.get(streamId);
+    return engine ? engine.cancel() : false;
   });
 
   ipcMain.handle('inference:vision', (_event, question, imageBytes, mimeType) =>

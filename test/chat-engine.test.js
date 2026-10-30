@@ -106,6 +106,26 @@ async function run() {
     assert.ok(events.some(e => e.type === 'error' && e.message === 'boom'), 'error event emitted');
   }
 
+  // --- seedContext() seeds prior turns into model context without streaming ---
+  {
+    const provider = createMockProvider(['ok']);
+    const engine = createChatEngine(provider);
+    engine.seedContext([
+      { role: 'system', content: 'You are Maura.' },
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' }
+    ]);
+    await engine.send('new question');
+    const call = provider.calls[0];
+    const contents = call.messages.map(m => m.content);
+    assert.ok(contents.includes('You are Maura.'), 'system context seeded');
+    assert.ok(contents.includes('earlier question'), 'prior user turn seeded');
+    assert.ok(contents.includes('earlier answer'), 'prior assistant turn seeded');
+    assert.ok(contents.includes('new question'), 'new user turn present');
+    // Order: system first, then conversation.
+    assert.strictEqual(call.messages[0].role, 'system', 'system message first');
+  }
+
   console.log('ChatEngine tests passed.');
 }
 
