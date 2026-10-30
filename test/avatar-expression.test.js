@@ -1,5 +1,13 @@
 const assert = require('assert');
-const { expressionForReply, resolveMorphTargets } = require('../renderer/avatar-expression.js');
+const {
+  expressionForReply,
+  resolveMorphTargets,
+  MOODS,
+  MOOD_TO_EXPRESSION,
+  moodForReply,
+  moodFromTag,
+  stripMoodTag
+} = require('../renderer/avatar-expression.js');
 
 assert.strictEqual(expressionForReply("Congratulations, that's exciting!"), 'happy');
 assert.strictEqual(expressionForReply("I'm sorry to hear that."), 'sad');
@@ -7,6 +15,34 @@ assert.strictEqual(expressionForReply("Wow, what a surprise."), 'surprised');
 assert.strictEqual(expressionForReply("Let's take a breath; there's no rush."), 'relaxed');
 assert.strictEqual(expressionForReply('Here are the steps you asked for.'), 'neutral');
 assert.strictEqual(expressionForReply(null), 'neutral');
+
+// 12-mood vocabulary (ported from the architecture blueprint CompanionMood).
+assert.strictEqual(MOODS.length, 12);
+for (const mood of MOODS) {
+  assert.ok(MOOD_TO_EXPRESSION[mood], 'mood missing expression mapping: ' + mood);
+}
+
+// Explicit model mood tag wins over keywords.
+assert.strictEqual(moodForReply('[mood:playful] congratulations'), 'playful');
+assert.strictEqual(moodFromTag('[mood:curious] tell me more'), 'curious');
+assert.strictEqual(moodFromTag('[mood:bogus] hi'), null); // invalid tag rejected
+assert.strictEqual(moodFromTag('no tag here'), null);
+
+// Tag stripping so tags are not shown or spoken.
+assert.strictEqual(stripMoodTag('[mood:happy] Great news!'), 'Great news!');
+assert.strictEqual(stripMoodTag('  [mood:sleepy]  Time for bed.'), 'Time for bed.');
+assert.strictEqual(stripMoodTag('no tag'), 'no tag');
+
+// Keyword fallback across the expanded mood set.
+assert.strictEqual(moodForReply('I am so sleepy today'), 'sleepy');
+assert.strictEqual(moodForReply('Haha, just kidding!'), 'playful');
+assert.strictEqual(moodForReply('Interesting, tell me more'), 'curious');
+assert.strictEqual(moodForReply('Let me think about that'), 'thinking');
+assert.strictEqual(moodForReply('The sky is blue'), 'neutral');
+
+// expressionForReply routes through mood detection then maps to a base expression.
+assert.strictEqual(expressionForReply('[mood:curious] what do you mean?'), 'surprised');
+assert.strictEqual(expressionForReply('I am sorry for your loss'), 'sad');
 const qiqiFace = {
   morphTargetDictionary: {
     Eye_Default: 0,

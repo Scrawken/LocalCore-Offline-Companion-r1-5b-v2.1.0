@@ -632,19 +632,23 @@
           ...activeMessages.slice(-20)
         ];
         const result = await window.localCore.inference.chat(chatMessages);
-        const assistantMessage = { role: 'assistant', content: result.content };
+        // Strip any [mood:X] tag the model emitted so it is not shown or spoken;
+        // the tag drives the avatar, not the transcript.
+        const cleanContent = window.localCoreAvatarExpression.stripMoodTag(result.content);
+        const assistantMessage = { role: 'assistant', content: cleanContent };
         activeMessages.push(assistantMessage);
         showChatMessage(assistantMessage);
         if (document.getElementById('avatarExpression').value === 'auto') {
-          const expression = window.localCoreAvatarExpression.expressionForReply(assistantMessage.content);
+          const mood = window.localCoreAvatarExpression.moodForReply(result.content);
+          const expression = window.localCoreAvatarExpression.MOOD_TO_EXPRESSION[mood] || 'neutral';
           try {
             if (avatarStage?.getExpressionSupport(expression)) {
               avatarStage.setExpression(expression);
               document.getElementById('avatar-status').textContent =
-                'Automatic expression: ' + expression + ' (best-effort text cues; select a fixed expression to override).';
+                'Mood: ' + mood + ' → expression: ' + expression + ' (select a fixed expression to override).';
             } else {
               document.getElementById('avatar-status').textContent =
-                'This reply suggested "' + expression + '", but the active VRM has no matching facial shape.';
+                'This reply suggested "' + mood + '" ("' + expression + '"), but the active VRM has no matching facial shape.';
             }
           } catch (error) {
             document.getElementById('avatar-status').textContent = 'Could not set avatar expression: ' + error.message;
