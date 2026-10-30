@@ -29,6 +29,25 @@ Qwen2.5-Omni is the only open-weight model that covers all four conversational m
 - Vision, ASR, and TTS teachers are distillation-safe per the table above.
 - Every dataset gets a manifest recording teacher, license, generation date, and filters applied. See [data/README.md](data/README.md).
 
+## Distillation Pipeline
+
+Three-stage tooling in [scripts/](scripts/), wired as npm scripts. Runs entirely on the RTX 3060 — no training involved at this stage.
+
+```bash
+npm run setup:teacher-model   # one-time: Qwen2.5-3B-Instruct Q4_K_M teacher (~1.9 GiB, Apache-2.0)
+npm run persona:validate      # validate persona files before generating from them
+npm run omni:generate         # self-instruct: persona seeds -> data/raw/ (spawns teacher on port 11435)
+npm run omni:curate           # filter, PII-scrub, dedup -> data/generated/ + manifest
+npm run omni:review           # 5% human-review sample -> data/review/
+node localcore-ai/omni/scripts/sample-review.js --approve   # flip manifest to reviewed:true
+```
+
+- **generate.js** loads a persona (default: [../personas/default.persona.json](../personas/default.persona.json)), runs each `training.selfInstructSeeds` scenario through the teacher with randomized mood/length/setting variations, and uses the persona's hand-written examples as style reference. `--persona <file>`, `--count N`, `--server-url <url>` to attach to an existing server.
+- **curate.js** enforces the persona contract: rejects conversations containing `voice.neverSays` phrases, non-alternating/short/oversized conversations, exact and near duplicates (Jaccard ≥ 0.8 on word 3-grams), and scrubs emails/phones/URLs/IPs. Writes the manifest with per-source license provenance.
+- **sample-review.js** requires human approval before any dataset is training-eligible; `--approve` only works after a review sample exists.
+
+The teacher server runs on port **11435** so it never collides with the app's llama.cpp server on 11434.
+
 ## Training Plan
 
 - **Stage 1 (RTX 3060):** QLoRA on text persona + instruction data. Validate chat quality against `npm run test:chat-model` fixtures.

@@ -208,6 +208,7 @@ Crash Reports/
 localcore-ai/**/checkpoints/
 localcore-ai/**/data/raw/
 localcore-ai/**/data/generated/
+localcore-ai/**/data/review/
 
 --- Preserve intentional project documentation ---
 
