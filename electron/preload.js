@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('localCore', {
     transcribeAudio: audioBytes => ipcRenderer.invoke('inference:transcribe', audioBytes),
     speak: text => ipcRenderer.invoke('inference:speak', text)
   },
+  window: {
+    getMode: () => ipcRenderer.invoke('window:get-mode'),
+    setMode: mode => ipcRenderer.invoke('window:set-mode', mode)
+  },
   persona: {
     list: () => ipcRenderer.invoke('persona:list'),
     active: () => ipcRenderer.invoke('persona:active'),

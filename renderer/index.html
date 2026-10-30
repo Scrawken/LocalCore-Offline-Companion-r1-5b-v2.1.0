@@ -226,6 +226,11 @@
       <strong style="font-size: 16px; letter-spacing: -0.3px;">LocalCore Desktop</strong>
       <span class="badge" id="modelStatus">Model: checking local runtime...</span>
       <span class="badge" style="color: #4ade80;">Air-Gap: ENFORCED</span>
+      <select id="windowMode" title="Window mode" style="width:auto;margin-left:auto;">
+        <option value="full">Full window</option>
+        <option value="overlay">Overlay</option>
+        <option value="tray">Tray only</option>
+      </select>
     </div>
     <div class="nav-tabs">
       <button class="tab-btn active" onclick="switchTab('text')">Text & Reasoning</button>
@@ -1830,6 +1835,18 @@
         document.getElementById('memory-status').textContent = 'Could not attach image: ' + error.message;
       }
     });
+    // Window mode selector (Phase 4): full / overlay / tray-only.
+    const windowModeSelect = document.getElementById('windowMode');
+    if (windowModeSelect && window.localCore.window) {
+      window.localCore.window.getMode().then(mode => { windowModeSelect.value = mode; }).catch(() => {});
+      windowModeSelect.addEventListener('change', async event => {
+        try {
+          await window.localCore.window.setMode(event.target.value);
+        } catch (error) {
+          document.getElementById('memory-status').textContent = 'Could not change window mode: ' + error.message;
+        }
+      });
+    }
     document.getElementById('clearImageButton').addEventListener('click', clearSelectedImage);
     document.getElementById('startRecordingButton').addEventListener('click', startPushToTalk);
     document.getElementById('stopRecordingButton').addEventListener('click', () => stopPushToTalk());

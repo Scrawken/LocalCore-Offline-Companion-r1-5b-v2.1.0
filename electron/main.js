@@ -58,6 +58,14 @@ function registerMemoryHandlers() {
     memoryStore.deleteConversation(conversationId));
 }
 
+function registerWindowHandlers() {
+  ipcMain.handle('window:get-mode', () => windowMode);
+  ipcMain.handle('window:set-mode', (_event, mode) => {
+    if (!WINDOW_MODES[mode]) throw new Error('Unsupported window mode: ' + mode);
+    return applyWindowMode(mode);
+  });
+}
+
 function registerPersonaHandlers() {
   ipcMain.handle('persona:list', () => personaStore.list());
   ipcMain.handle('persona:active', () => {
@@ -275,6 +283,37 @@ async function startDaemon() {
   daemonProcess.llmLease = llmLease;
 }
 
+// Phase 4: window modes (full / overlay / tray-only) with per-mode state
+// preservation. Bounds are captured on switch so each mode restores its own
+// size/position.
+const WINDOW_MODES = {
+  full: { width: 1280, height: 860, alwaysOnTop: false, resizable: true },
+  overlay: { width: 420, height: 640, alwaysOnTop: true, resizable: true },
+  tray: { alwaysOnTop: false } // window hidden; runs from tray
+};
+let windowMode = 'full';
+const savedBounds = {};
+
+function applyWindowMode(mode) {
+  if (!mainWindow || !WINDOW_MODES[mode]) return false;
+  // Save current bounds for the mode we're leaving.
+  try {
+    savedBounds[windowMode] = mainWindow.getBounds();
+  } catch { /* window may be destroyed */ }
+
+  windowMode = mode;
+  const config = WINDOW_MODES[mode];
+  if (mode === 'tray') {
+    mainWindow.hide();
+    return true;
+  }
+  mainWindow.show();
+  mainWindow.setAlwaysOnTop(config.alwaysOnTop);
+  const bounds = savedBounds[mode] || { width: config.width, height: config.height };
+  mainWindow.setBounds({ ...bounds, width: bounds.width || config.width, height: bounds.height || config.height });
+  return true;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -354,6 +393,7 @@ app.whenReady().then(() => {
   registerInferenceHandlers();
   registerEgressHandlers(); // Phase 0
   registerGovernorHandlers(); // Phase 0 S0.2
+  registerWindowHandlers(); // Phase 4
   startDaemon();
   createWindow();
 });
