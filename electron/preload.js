@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('localCore', {
     prune: options => ipcRenderer.invoke('memory:prune', options),
     wipeAll: () => ipcRenderer.invoke('memory:wipe-all'),
     writeLog: limit => ipcRenderer.invoke('memory:write-log', limit),
+    facts: {
+      list: category => ipcRenderer.invoke('memory:facts:list', category),
+      delete: id => ipcRenderer.invoke('memory:facts:delete', id),
+      extract: (text, sourceMessageId) => ipcRenderer.invoke('memory:facts:extract', text, sourceMessageId)
+    },
     setRememberEnabled: enabled => ipcRenderer.invoke('memory:set-remember-enabled', enabled),
     setDisclosureAcknowledged: acknowledged => ipcRenderer.invoke('memory:set-disclosure-acknowledged', acknowledged),
     saveAsset: (conversationId, type, prompt, bytes, details) =>

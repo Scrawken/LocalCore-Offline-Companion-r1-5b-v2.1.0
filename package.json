@@ -23,6 +23,7 @@
     "test:no-writes-outside": "node test/phase0-no-writes-outside-test.js",
     "test:chat-engine": "node test/chat-engine.test.js",
     "test:provider-registry": "node test/model-provider-registry.test.js",
+    "test:memory-facts": "node test/memory-facts-store.test.js",
     "auto-install": "cmd /c installer\\auto-install.bat",
     "test": "node test/test-suite.js",
     "verify-integrity": "node installer/updater.js",

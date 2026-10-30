@@ -706,6 +706,11 @@
         try {
           await persistMessage('user', userContent);
           if (image) await persistAttachedImage(image, p);
+          // Phase 2: extract durable user facts asynchronously (fire-and-forget;
+          // never blocks the reply). Only when remembering is on.
+          if (document.getElementById('rememberEnabled').checked) {
+            window.localCore.memory.facts.extract(userContent).catch(() => {});
+          }
         } catch (memoryError) {
           document.getElementById('memory-status').textContent = 'Could not save conversation: ' + memoryError.message;
         }

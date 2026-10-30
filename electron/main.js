@@ -6,6 +6,7 @@ const { createLocalMemoryStore } = require('./local-memory-store.js');
 const { createAvatarStore } = require('./avatar-store.js');
 const { createPersonaStore } = require('./persona-store.js');
 const { createSafeStorageCrypto } = require('./safe-storage-crypto.js');
+const { createMemoryFactsStore } = require('./memory-facts-store.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -20,6 +21,7 @@ const { setResourceGovernor } = require('../engine/llama-cpp-provider.js');
 let daemonProcess = null;
 let mainWindow = null;
 let memoryStore = null;
+let memoryFactsStore = null;
 let personaStore = null;
 let egressGateway = null;
 let resourceGovernor = null;
@@ -38,6 +40,11 @@ function registerMemoryHandlers() {
   ipcMain.handle('memory:prune', (_event, options) => memoryStore.pruneConversations(options));
   ipcMain.handle('memory:wipe-all', () => memoryStore.wipeAll());
   ipcMain.handle('memory:write-log', (_event, limit) => memoryStore.getWriteLog(limit));
+  // Phase 2: facts layer
+  ipcMain.handle('memory:facts:list', (_event, category) => memoryFactsStore.list(category));
+  ipcMain.handle('memory:facts:delete', (_event, id) => memoryFactsStore.deleteFact(id));
+  ipcMain.handle('memory:facts:extract', async (_event, text, sourceMessageId) =>
+    memoryFactsStore.extractFromMessage(text, sourceMessageId));
   ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
     memoryStore.setRememberEnabled(enabled));
   ipcMain.handle('memory:set-disclosure-acknowledged', (_event, acknowledged) =>
@@ -320,6 +327,12 @@ app.whenReady().then(() => {
   memoryStore = createLocalMemoryStore(
     path.join(app.getPath('userData'), 'memory'),
     activeModelId,
+    createSafeStorageCrypto()
+  );
+
+  // Phase 2: facts memory layer (durable user facts, encrypted at rest).
+  memoryFactsStore = createMemoryFactsStore(
+    path.join(app.getPath('userData'), 'memory', 'facts'),
     createSafeStorageCrypto()
   );
 
