@@ -1,0 +1,36 @@
+{
+  "dataset": "persona_sft_v1",
+  "created": "2026-10-30",
+  "personaId": "maura-default",
+  "sources": [
+    {
+      "name": "self_instruct",
+      "teacher": "dolphin3-llama3.1-8b-q4_k_m",
+      "license": "Meta Llama 3.1 Community License",
+      "count": 36
+    }
+  ],
+  "filters": [
+    "structure",
+    "length",
+    "persona-neverSays",
+    "pii-scrub",
+    "exact-dedup",
+    "near-dedup(jaccard>=0.8)"
+  ],
+  "stats": {
+    "inputs": [
+      "persona_sft_2026-10-30T19-14-24.jsonl"
+    ],
+    "read": 37,
+    "rejectedStructure": 0,
+    "rejectedLength": 1,
+    "rejectedNeverSays": 0,
+    "rejectedExactDup": 0,
+    "rejectedNearDup": 0,
+    "piiHits": {},
+    "kept": 36
+  },
+  "reviewed": false,
+  "notes": ""
+}

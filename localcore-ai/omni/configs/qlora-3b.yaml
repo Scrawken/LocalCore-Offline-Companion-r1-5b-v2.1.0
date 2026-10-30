@@ -1,20 +1,20 @@
-# LocalCore-Omni — QLoRA reference config (Stage 1: text persona)
+# LocalCore-Omni — QLoRA reference config (Stage 1: text persona, TEXT CORE)
 # REFERENCE ONLY until first training run. Target framework: axolotl or HF TRL + PEFT.
 # Hardware target: RTX 3060 12GB.
+#
+# The text core is a Llama 3.1 derivative so that Dolphin 3.0 8B (Llama license)
+# can legally serve as the distillation teacher. Vision/speech stay on Qwen2.5-Omni
+# encoders (Apache 2.0) and are trained separately in Stages 2-3.
 
-base_model: Qwen/Qwen2.5-Omni-3B
-model_type: Qwen2_5OmniForConditionalGeneration
+base_model: models/text-core/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf   # TODO: add setup:text-core script
+model_type: LlamaForCausalLM
 load_in_4bit: true
 bnb_4bit_quant_type: nf4
 bnb_4bit_compute_dtype: bfloat16
 bnb_4bit_use_double_quant: true
 
-# Stage 1 trains the text/Thinker path only. Vision and speech encoders stay frozen
-# until Stages 2-3 so we do not regress modalities we have not evaluated yet.
-freeze_modules:
-  - visual
-  - audio_tower
-  - talker
+# Stage 1 trains the text core only. Vision/speech encoders are a separate model
+# (Qwen2.5-Omni) trained in later stages; nothing to freeze here.
 
 adapter: qlora
 lora_r: 32

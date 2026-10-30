@@ -36,6 +36,14 @@ function normalize(text) {
   return text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Punctuation-insensitive phrase match: "Certainly!", "certainly," and
+// "certainly" must all match a neverSays entry of "Certainly!".
+function containsPhrase(text, phrase) {
+  const strippedText = normalize(text);
+  const strippedPhrase = normalize(phrase);
+  return strippedPhrase.length > 0 && strippedText.includes(strippedPhrase);
+}
+
 function shingles(text, n = 3) {
   const words = normalize(text).split(' ').filter(Boolean);
   const set = new Set();
@@ -131,8 +139,8 @@ function main() {
         stats.rejectedLength++;
         continue;
       }
-      const assistantText = conversationText(messages).toLowerCase();
-      if (neverSays.some(phrase => assistantText.includes(phrase))) {
+      const assistantText = conversationText(messages);
+      if (neverSays.some(phrase => containsPhrase(assistantText, phrase))) {
         stats.rejectedNeverSays++;
         continue;
       }
@@ -152,6 +160,8 @@ function main() {
       kept.push({
         messages: [{ role: 'system', content: persona.systemPrompt }, ...scrubbed],
         source: record.source || 'self_instruct',
+        teacher: record.teacher || null,
+        teacherLicense: record.teacherLicense || null,
         tags: record.tags || []
       });
     }
@@ -167,11 +177,19 @@ function main() {
     dataset,
     created: new Date().toISOString().slice(0, 10),
     personaId: persona.id,
-    sources: [...new Set(kept.map(record => record.source))].map(name => ({
-      name,
-      license: name === 'self_instruct' ? 'Apache-2.0 (teacher: ' + (argValue('--teacher') || 'qwen2.5-3b-instruct-q4_k_m') + ')' : 'see raw records',
-      count: kept.filter(record => record.source === name).length
-    })),
+    sources: (() => {
+      // Aggregate provenance per (source, teacher, license) from the records
+      // themselves so the manifest reflects the actual teacher used.
+      const byKey = new Map();
+      for (const record of kept) {
+        const key = [record.source, record.teacher || 'unknown', record.teacherLicense || 'unknown'].join('|');
+        if (!byKey.has(key)) {
+          byKey.set(key, { name: record.source, teacher: record.teacher || 'unknown', license: record.teacherLicense || 'unknown', count: 0 });
+        }
+        byKey.get(key).count++;
+      }
+      return [...byKey.values()];
+    })(),
     filters: ['structure', 'length', 'persona-neverSays', 'pii-scrub', 'exact-dedup', 'near-dedup(jaccard>=' + NEAR_DUP_THRESHOLD + ')'],
     stats,
     reviewed: false,

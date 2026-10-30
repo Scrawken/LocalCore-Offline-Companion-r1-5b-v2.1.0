@@ -15,10 +15,12 @@ data/
 
 ### 1. `persona_sft_v1` — text persona & instruction (Stage 1)
 
-**⚠️ License rule:** Dolphin 3.0 outputs are **forbidden** here (Llama license → cannot train non-Llama models). Allowed sources, in priority order:
+**Teacher:** Dolphin 3.0 Llama 3.1 8B. This is license-legal because the Omni text core is a **Llama 3.1 derivative** — the Llama Community License permits using Llama-model outputs to improve other Llama models. **Never use Dolphin outputs to train the Qwen vision/speech encoders or any non-Llama model.**
+
+Allowed sources, in priority order:
 
 1. **Hand-written** persona definition and example conversations (highest value, ours outright);
-2. **Self-instruct:** Qwen2.5-Omni-3B (or Qwen2.5-3B-Instruct, Apache 2.0) generates conversations conditioned on our hand-written persona/system prompts;
+2. **Self-instruct:** Dolphin 3.0 8B generates conversations conditioned on our hand-written persona/system prompts (the persona is *ours*, not copied from Dolphin's tuning);
 3. **Apache-2.0 instruction datasets** (record exact dataset name + version in the manifest).
 
 **Format (JSONL, chat template):**

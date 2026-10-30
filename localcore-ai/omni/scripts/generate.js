@@ -56,19 +56,44 @@ function formatConversation(messages) {
   return messages.map(m => m.role.toUpperCase() + ': ' + m.content).join('\n');
 }
 
+function voiceRules(persona) {
+  const rules = [];
+  const v = persona.voice || {};
+  const b = persona.behavior || {};
+  if (v.humorStyle) rules.push('Humor: ' + v.humorStyle + '.');
+  if (Array.isArray(v.quirks)) for (const quirk of v.quirks) rules.push('Quirk: ' + quirk + '.');
+  if (b.onDisagreement) rules.push('When disagreeing: ' + b.onDisagreement + '.');
+  if (b.onUserDistress) rules.push('When the user is distressed: ' + b.onUserDistress + ' — do NOT jump to fixing.');
+  if (b.onUnknown) rules.push('When not knowing something: ' + b.onUnknown + '.');
+  if (Array.isArray(v.verbalTics) && v.verbalTics.length) {
+    rules.push('Rare verbal habits (use AT MOST once per conversation, and only when genuinely fitting — never as a default opener): ' + v.verbalTics.join('; ') + '.');
+  }
+  if (Array.isArray(v.neverSays) && v.neverSays.length) {
+    rules.push('NEVER say any of these, in any punctuation or casing: ' + v.neverSays.map(p => '"' + p + '"').join(', ') + '.');
+  }
+  rules.push('Never use generic assistant filler: "I\'m here to help", "I\'m here to listen", "How can I assist you", "Certainly", "Of course", "I understand".');
+  rules.push('Vary your sentence openers. Do NOT start consecutive assistant messages the same way.');
+  rules.push('The assistant is ' + persona.identity.name + '. The USER is a different person. Never address the user as ' + persona.identity.name + '.');
+  return rules;
+}
+
 function buildMetaPrompt(persona, seed, styleExamples) {
   const variation = { mood: pick(USER_MOODS), length: pick(LENGTHS), setting: pick(SETTINGS) };
   const styleBlock = styleExamples.length
-    ? 'Style reference (match the voice and approximate length; do NOT copy content):\n\n' +
-      styleExamples.map((example, i) => '--- Example ' + (i + 1) + ' ---\n' + formatConversation(example.messages.filter(m => m.role !== 'system'))).join('\n\n')
+    ? 'Here is how the ASSISTANT talks. Match this voice exactly — its rhythm, directness, and warmth. Do NOT copy the content:\n\n' +
+      styleExamples.map((example, i) => '--- Voice example ' + (i + 1) + ' ---\n' + formatConversation(example.messages.filter(m => m.role !== 'system'))).join('\n\n')
     : '';
+  const rules = voiceRules(persona);
   const prompt = [
-    'You are a training-data writer. Write one realistic conversation between a USER and an ASSISTANT.',
-    '',
-    'ASSISTANT character:',
-    persona.systemPrompt,
+    'You are a training-data writer. Write one realistic conversation between a USER and an ASSISTANT named ' + persona.identity.name + '.',
     '',
     styleBlock,
+    '',
+    'ASSISTANT voice rules (follow every one):',
+    ...rules.map(r => '- ' + r),
+    '',
+    'ASSISTANT character background:',
+    persona.systemPrompt,
     '',
     'Scenario: ' + seed,
     'User mood: ' + variation.mood,
@@ -77,34 +102,92 @@ function buildMetaPrompt(persona, seed, styleExamples) {
     '',
     'Rules:',
     '- Messages alternate, start with the user, end with the assistant.',
-    '- The assistant must stay fully in character per the persona above.',
+    '- The assistant must stay fully in character per the voice rules and background above.',
     '- The user is an adult talking to their personal companion; write them as a believable person, not a questionnaire.',
+    '- SELF-CHECK before finishing: read each assistant line. If any line could have been said by a generic customer-service chatbot, rewrite it in ' + persona.identity.name + '\'s voice.',
     '- Output ONLY a JSON array, no commentary: [{"role":"user","content":"..."},{"role":"assistant","content":"..."}, ...]'
   ].join('\n');
   return { prompt, variation };
 }
 
+// Extract the first balanced JSON array from arbitrary text (handles leading
+// commentary and code fences). Returns the array string or null.
+function extractJsonArray(text) {
+  const start = text.indexOf('[');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null; // unbalanced — likely truncated
+}
+
+// Salvage a conversation from USER:/ASSISTANT: plain-text format.
+function parseTextFormat(text) {
+  const lines = text.split(/\r?\n/);
+  const messages = [];
+  let current = null;
+  for (const line of lines) {
+    const match = line.match(/^(USER|ASSISTANT|User|Assistant|user|assistant)\s*:\s*(.*)$/);
+    if (match) {
+      if (current) messages.push(current);
+      current = { role: match[1].toLowerCase() === 'user' ? 'user' : 'assistant', content: match[2] };
+    } else if (current && line.trim()) {
+      current.content += ' ' + line.trim();
+    }
+  }
+  if (current) messages.push(current);
+  return messages.length >= 2 ? messages : null;
+}
+
+function validateMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return null;
+  const cleaned = messages.filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim());
+  if (cleaned.length < 2) return null;
+  if (cleaned[0].role !== 'user') return null;
+  if (cleaned[cleaned.length - 1].role !== 'assistant') cleaned.pop();
+  if (cleaned.length < 2) return null;
+  for (let i = 1; i < cleaned.length; i++) {
+    if (cleaned[i].role === cleaned[i - 1].role) return null;
+  }
+  return cleaned;
+}
+
 function parseConversation(text) {
-  let cleaned = text.trim();
-  const fence = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) cleaned = fence[1].trim();
-  const start = cleaned.indexOf('[');
-  const end = cleaned.lastIndexOf(']');
-  if (start < 0 || end <= start) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(cleaned.slice(start, end + 1));
-  } catch {
-    return null;
+  // 1. Try to pull a balanced JSON array from anywhere in the output.
+  const arrayText = extractJsonArray(text);
+  if (arrayText) {
+    try {
+      const parsed = JSON.parse(arrayText);
+      const valid = validateMessages(parsed);
+      if (valid) return valid;
+    } catch {}
   }
-  if (!Array.isArray(parsed) || parsed.length < 2) return null;
-  const messages = parsed.filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim());
-  if (messages.length < 2) return null;
-  if (messages[0].role !== 'user' || messages[messages.length - 1].role !== 'assistant') return null;
-  for (let i = 1; i < messages.length; i++) {
-    if (messages[i].role === messages[i - 1].role) return null;
+  // 2. Truncated JSON: cut at the last complete object and close the array.
+  const start = text.indexOf('[');
+  if (start >= 0) {
+    const lastBrace = text.lastIndexOf('}');
+    if (lastBrace > start) {
+      try {
+        const parsed = JSON.parse(text.slice(start, lastBrace + 1) + ']');
+        const valid = validateMessages(parsed);
+        if (valid) return valid;
+      } catch {}
+    }
   }
-  return messages;
+  // 3. Plain-text USER:/ASSISTANT: fallback.
+  return validateMessages(parseTextFormat(text));
 }
 
 async function main() {
@@ -137,10 +220,22 @@ async function main() {
         let messages = null;
         for (let retry = 0; retry < 3 && !messages; retry++) {
           try {
-            const text = await chatCompletion(baseUrl, [{ role: 'user', content: prompt }], { temperature: 0.9, topP: 0.95, maxTokens: 2048 });
+            const text = await chatCompletion(baseUrl, [{ role: 'user', content: prompt }], { temperature: 0.9, topP: 0.95, maxTokens: 8192 });
             messages = parseConversation(text);
+            if (!messages && process.env.LOCALCORE_DEBUG) {
+              console.warn('  [debug] unparseable output (first 400 chars): ' + text.slice(0, 400).replace(/\n/g, '\\n'));
+            }
           } catch (error) {
-            console.warn('  Completion error (retry ' + (retry + 1) + '/3): ' + error.message);
+            // Truncated output (finish_reason=length) carries partial content —
+            // try to salvage complete messages from it before retrying.
+            if (error.truncated && error.partial) {
+              messages = parseConversation(error.partial);
+              if (!messages && process.env.LOCALCORE_DEBUG) {
+                console.warn('  [debug] truncated and unsalvageable (first 300 chars): ' + error.partial.slice(0, 300).replace(/\n/g, '\\n'));
+              }
+            } else if (!error.truncated) {
+              console.warn('  Completion error (retry ' + (retry + 1) + '/3): ' + error.message);
+            }
           }
         }
         if (!messages) {

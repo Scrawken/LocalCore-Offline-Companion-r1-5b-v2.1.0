@@ -9,18 +9,24 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 const RUNTIME_DIRECTORY = path.join(ROOT, 'runtime', 'llama-cuda');
 const TEACHER_PORT = 11435; // app server uses 11434
 
+// Text teacher: Dolphin 3.0 Llama 3.1 8B. Its outputs may train Llama-derivative
+// students (the Omni text core is a Llama 3.1 base), which is permitted under the
+// Llama Community License. Vision/speech teachers (Qwen2.5-VL, Whisper, Piper)
+// remain Apache/MIT and are handled separately.
 const TEACHER = {
-  id: 'qwen2.5-3b-instruct-q4_k_m',
-  fileName: 'Qwen2.5-3B-Instruct-Q4_K_M.gguf',
-  relativePath: path.join('models', 'teacher', 'Qwen2.5-3B-Instruct-Q4_K_M.gguf'),
-  license: 'Apache-2.0'
+  id: 'dolphin3-llama3.1-8b-q4_k_m',
+  fileName: 'Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf',
+  relativePath: path.join('models', 'chat', 'Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf'),
+  license: 'Meta Llama 3.1 Community License'
 };
 
 function resolveTeacherModel() {
   const candidates = [
     process.env.LOCALCORE_TEACHER_PATH,
     process.env.APPDATA ? path.join(process.env.APPDATA, 'LocalCore', 'models', TEACHER.fileName) : null,
-    path.join(ROOT, TEACHER.relativePath)
+    path.join(ROOT, TEACHER.relativePath),
+    // Fallback to the Qwen teacher if Dolphin is unavailable (text quality drops).
+    path.join(ROOT, 'models', 'teacher', 'Qwen2.5-3B-Instruct-Q4_K_M.gguf')
   ].filter(Boolean);
   return candidates.find(candidate => {
     if (!fs.existsSync(candidate) || fs.statSync(candidate).size < 100 * 1024 * 1024) return false;
@@ -61,7 +67,7 @@ async function startTeacherServer(options = {}) {
     '-m', modelPath,
     '--host', '127.0.0.1',
     '--port', String(port),
-    '--ctx-size', String(options.ctxSize || 8192),
+    '--ctx-size', String(options.ctxSize || 16384),
     '--threads', String(Math.max(1, Math.min(8, require('os').availableParallelism?.() || 4))),
     '--n-gpu-layers', '99',
     '--alias', TEACHER.id
@@ -94,10 +100,17 @@ async function chatCompletion(baseUrl, messages, options = {}) {
     throw new Error('Teacher completion failed with HTTP ' + response.status + ': ' + (await response.text()).slice(0, 300));
   }
   const payload = await response.json();
-  const content = payload.choices && payload.choices[0] && payload.choices[0].message
-    ? payload.choices[0].message.content
-    : null;
+  const choice = payload.choices && payload.choices[0];
+  const content = choice && choice.message ? choice.message.content : null;
   if (!content) throw new Error('Teacher returned an empty completion.');
+  // Surface truncation: llama.cpp sets finish_reason='length' when the token
+  // budget is exhausted mid-output, which is the usual cause of unparseable JSON.
+  if (choice && choice.finish_reason === 'length') {
+    const err = new Error('Teacher output truncated (finish_reason=length).');
+    err.truncated = true;
+    err.partial = content;
+    throw err;
+  }
   return content;
 }
 
