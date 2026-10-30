@@ -368,11 +368,22 @@ class AvatarStage {
     this.animationFrame = requestAnimationFrame(() => this.animate());
     const delta = this.clock.getDelta();
     const elapsed = this.clock.elapsedTime;
+
+    // Phase 4 idle motion: breathing, aperiodic blink, sway, and a subtle
+    // emotion-driven micro-expression on top of the base idle.
+
+    // Breathing: gentle chest rise/fall (scale) layered on the torso sway.
+    const breath = Math.sin(elapsed * 1.4) * 0.5 + 0.5; // 0..1
+    if (this.torso) {
+      this.torso.rotation.y = Math.sin(elapsed * 0.32) * 0.012;
+      const breathScale = 1 + breath * 0.012;
+      this.torso.scale.set(breathScale, 1 + breath * 0.008, breathScale);
+    }
     if (this.head) {
       this.head.rotation.y = Math.sin(elapsed * 0.55) * 0.045;
-      this.head.rotation.x = Math.sin(elapsed * 0.38) * 0.018;
+      this.head.rotation.x = Math.sin(elapsed * 0.38) * 0.018 + breath * 0.006;
     }
-    if (this.torso) this.torso.rotation.y = Math.sin(elapsed * 0.32) * 0.012;
+
     if (this.vrm) {
       const manager = this.vrm.expressionManager;
       if (manager) {
@@ -387,9 +398,31 @@ class AvatarStage {
           mouth = Math.min(1, Math.max(0, (Math.sqrt(sum / this.audioSamples.length) - 0.018) * 11));
         }
         manager.setValue('aa', mouth);
-        manager.setValue('blink', Math.pow(Math.max(0, Math.sin(elapsed * 0.7) - 0.985) / 0.015, 2));
         this.setMorphWeight('mouth', mouth);
-        this.setMorphWeight('blink', Math.pow(Math.max(0, Math.sin(elapsed * 0.7) - 0.985) / 0.015, 2));
+
+        // Aperiodic blink: random interval between ~2.5s and ~6s, ~150ms close.
+        if (this.nextBlinkAt === undefined) this.nextBlinkAt = elapsed + 2.5 + Math.random() * 3.5;
+        let blink = 0;
+        if (elapsed >= this.nextBlinkAt) {
+          const phase = (elapsed - this.nextBlinkAt) / 0.15; // 150ms blink
+          if (phase >= 1) {
+            this.nextBlinkAt = elapsed + 2.5 + Math.random() * 3.5;
+          } else {
+            blink = Math.sin(Math.min(1, phase) * Math.PI);
+          }
+        }
+        manager.setValue('blink', blink);
+        this.setMorphWeight('blink', blink);
+
+        // Emotion micro-expression: a faint, slow pulse of the active mood's
+        // expression so the idle feels alive without overriding the set mood.
+        if (this.expression && this.expression !== 'neutral') {
+          const pulse = (Math.sin(elapsed * 0.9) * 0.5 + 0.5) * 0.12;
+          const current = manager.getValue ? manager.getValue(this.expression) : null;
+          if (current !== null && current !== undefined) {
+            manager.setValue(this.expression, Math.min(1, current + pulse * 0.05));
+          }
+        }
       }
       this.vrm.update(delta);
     }
