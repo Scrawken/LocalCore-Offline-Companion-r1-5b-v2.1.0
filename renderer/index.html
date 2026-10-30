@@ -551,6 +551,24 @@
       renderMemoryList();
     }
 
+    // Barge-in (Phase 3): stop any playing TTS immediately when the user starts
+    // a new turn or opens the microphone. Pauses the player, revokes its object
+    // URL, and relaxes the avatar mouth so it does not freeze open.
+    function stopSpeechPlayback() {
+      const player = document.getElementById('voiceReplyPlayer');
+      if (!player) return;
+      try {
+        if (!player.paused) player.pause();
+        player.currentTime = 0;
+        if (player.dataset.objectUrl) {
+          URL.revokeObjectURL(player.dataset.objectUrl);
+          delete player.dataset.objectUrl;
+        }
+        player.removeAttribute('src');
+        if (avatarStage) avatarStage.setMorphWeight('mouth', 0);
+      } catch { /* best-effort stop */ }
+    }
+
     async function speakAssistantReply(message) {
       if (!document.getElementById('speakRepliesEnabled').checked) return;
       const status = document.getElementById('speech-status');
@@ -617,6 +635,7 @@
         return;
       }
       const sendButton = document.getElementById('sendMessageButton');
+      stopSpeechPlayback(); // barge-in: cut any playing voice reply on a new turn
       if (avatarStage && document.getElementById('speakRepliesEnabled').checked) {
         try {
           await avatarStage.prepareAudio(document.getElementById('voiceReplyPlayer'));
@@ -756,6 +775,7 @@
         status.textContent = 'Wait for the current chat response before recording.';
         return;
       }
+      stopSpeechPlayback(); // barge-in: cut any playing voice reply when the mic opens
       startButton.disabled = true;
       document.getElementById('audioInputDevice').disabled = true;
       document.getElementById('refreshMediaDevicesButton').disabled = true;
