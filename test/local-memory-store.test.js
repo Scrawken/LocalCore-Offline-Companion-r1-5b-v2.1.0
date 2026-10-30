@@ -88,6 +88,61 @@ try {
   assert.strictEqual(store.searchConversations('').total, 0, 'empty query returns empty');
   assert.strictEqual(store.searchConversations(null).total, 0, 'null query returns empty');
 
+  // --- At-rest encryption (mock provider; safeStorage needs the Electron app) ---
+  const encDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-enc-'));
+  try {
+    // Simple reversible mock: base64 + reverse (NOT real crypto; test-only).
+    const mockCrypto = {
+      isAvailable: () => true,
+      encrypt: text => Buffer.from(Buffer.from(text, 'utf8').toString('base64')).reverse(),
+      decrypt: buf => Buffer.from(buf.reverse().toString(), 'base64').toString('utf8')
+    };
+    const encStore = createLocalMemoryStore(encDir, 'test-model', mockCrypto);
+    const encConv = encStore.createConversation();
+    encStore.appendMessage(encConv.id, 'user', 'secret message');
+
+    // On-disk file must be encrypted (envelope prefix, not readable JSON).
+    const onDisk = fs.readFileSync(path.join(encDir, 'memory.json'), 'utf8');
+    assert.ok(onDisk.startsWith('ENC1:'), 'memory.json is written with the encryption envelope');
+    assert.ok(!onDisk.includes('secret message'), 'plaintext content is not present on disk');
+    assert.strictEqual(encStore.getEncryptionStatus().onDisk, 'encrypted', 'status reports encrypted');
+
+    // Round-trip: a new store instance decrypts correctly.
+    const encStore2 = createLocalMemoryStore(encDir, 'test-model', mockCrypto);
+    assert.strictEqual(
+      encStore2.getSnapshot().conversations[0].messages[0].content,
+      'secret message',
+      'encrypted memory decrypts on read'
+    );
+
+    // Migration: write plaintext, then open with encryption -> becomes encrypted.
+    const plainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-plain-'));
+    try {
+      const plainStore = createLocalMemoryStore(plainDir, 'test-model'); // no crypto
+      const plainConv = plainStore.createConversation();
+      plainStore.appendMessage(plainConv.id, 'user', 'migrate me');
+      assert.strictEqual(plainStore.getEncryptionStatus().onDisk, 'plaintext', 'starts plaintext');
+
+      const migrated = createLocalMemoryStore(plainDir, 'test-model', mockCrypto);
+      migrated.getSnapshot(); // triggers migration on read
+      const migratedRaw = fs.readFileSync(path.join(plainDir, 'memory.json'), 'utf8');
+      assert.ok(migratedRaw.startsWith('ENC1:'), 'plaintext file migrates to encrypted on read');
+      assert.strictEqual(
+        migrated.getSnapshot().conversations[0].messages[0].content,
+        'migrate me',
+        'content survives migration'
+      );
+    } finally {
+      fs.rmSync(plainDir, { recursive: true, force: true });
+    }
+
+    // Encrypted file + no provider -> clear error, not silent corruption.
+    const noCrypto = createLocalMemoryStore(encDir, 'test-model');
+    assert.throws(() => noCrypto.getSnapshot(), /encrypted but encryption is unavailable/);
+  } finally {
+    fs.rmSync(encDir, { recursive: true, force: true });
+  }
+
   console.log('Local memory store tests passed.');
 } finally {
   fs.rmSync(testDirectory, { recursive: true, force: true });

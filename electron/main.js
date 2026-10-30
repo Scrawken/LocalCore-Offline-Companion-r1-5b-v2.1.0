@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { createLocalMemoryStore } = require('./local-memory-store.js');
 const { createAvatarStore } = require('./avatar-store.js');
 const { createPersonaStore } = require('./persona-store.js');
+const { createSafeStorageCrypto } = require('./safe-storage-crypto.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -32,6 +33,7 @@ function registerMemoryHandlers() {
     memoryStore.appendMessage(conversationId, role, content, metadata));
   ipcMain.handle('memory:search', (_event, query, options) =>
     memoryStore.searchConversations(query, options));
+  ipcMain.handle('memory:encryption-status', () => memoryStore.getEncryptionStatus());
   ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
     memoryStore.setRememberEnabled(enabled));
   ipcMain.handle('memory:save-asset', (_event, conversationId, type, prompt, bytes, details) => {
@@ -289,8 +291,14 @@ app.whenReady().then(() => {
   // Wire governor to ModelProvider
   setResourceGovernor(resourceGovernor);
 
-  // Initialize memory store (legacy, will be refactored in Phase 2)
-  memoryStore = createLocalMemoryStore(path.join(app.getPath('userData'), 'memory'), activeModelId);
+  // Initialize memory store with at-rest encryption (Phase 2). safeStorage uses
+  // Windows DPAPI; when unavailable the store falls back to plaintext and
+  // reports encryptionAvailable:false.
+  memoryStore = createLocalMemoryStore(
+    path.join(app.getPath('userData'), 'memory'),
+    activeModelId,
+    createSafeStorageCrypto()
+  );
 
   // Phase 1 S1.1: Initialize persona store (drives the chat system prompt)
   personaStore = createPersonaStore();

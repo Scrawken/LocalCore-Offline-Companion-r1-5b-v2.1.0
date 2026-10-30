@@ -3,6 +3,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 
 const STATE_FILE = 'memory.json';
+const ENCRYPTION_PREFIX = 'ENC1:';
 const ASSET_DIRECTORY = 'memory-assets';
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 const ASSET_TYPES = {
@@ -18,11 +19,25 @@ const ASSET_TYPES = {
   video: { extension: '.gif', mimeType: 'image/gif' }
 };
 
-function createLocalMemoryStore(userDataPath, modelId = null) {
+// cryptoProvider is optional. When present and available, memory.json is
+// encrypted at rest (Electron safeStorage / Windows DPAPI). Shape:
+//   { isAvailable(): boolean, encrypt(utf8String): Buffer, decrypt(Buffer): utf8String }
+// When absent or unavailable, the store reads/writes plaintext and reports
+// encryptionAvailable:false. Plaintext files are migrated to encrypted form on
+// first read once encryption is available.
+function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = null) {
   const statePath = path.join(userDataPath, STATE_FILE);
   const assetsPath = path.join(userDataPath, ASSET_DIRECTORY);
   fs.mkdirSync(userDataPath, { recursive: true });
   fs.mkdirSync(assetsPath, { recursive: true });
+
+  function encryptionAvailable() {
+    try {
+      return Boolean(cryptoProvider && cryptoProvider.isAvailable());
+    } catch {
+      return false;
+    }
+  }
 
   function readState() {
     if (!fs.existsSync(statePath)) {
@@ -34,17 +49,38 @@ function createLocalMemoryStore(userDataPath, modelId = null) {
       };
     }
 
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    const raw = fs.readFileSync(statePath, 'utf8');
+    let jsonText = raw;
+    let wasEncrypted = raw.startsWith(ENCRYPTION_PREFIX);
+    if (wasEncrypted) {
+      if (!encryptionAvailable()) {
+        throw new Error('Local memory is encrypted but encryption is unavailable on this device.');
+      }
+      const ciphertext = Buffer.from(raw.slice(ENCRYPTION_PREFIX.length), 'base64');
+      jsonText = cryptoProvider.decrypt(ciphertext).toString('utf8');
+    }
+
+    const state = JSON.parse(jsonText);
     if (state.schemaVersion !== 1 || !Array.isArray(state.conversations)) {
       throw new Error('Local memory file has an unsupported or invalid format.');
+    }
+
+    // Transparent migration: a plaintext file becomes encrypted on first read
+    // once encryption is available.
+    if (!wasEncrypted && encryptionAvailable()) {
+      writeState(state);
     }
     return state;
   }
 
   function writeState(state) {
+    let text = JSON.stringify(state, null, 2);
+    if (encryptionAvailable()) {
+      text = ENCRYPTION_PREFIX + cryptoProvider.encrypt(text).toString('base64');
+    }
     const temporaryPath = statePath + '.' + randomUUID() + '.tmp';
     try {
-      fs.writeFileSync(temporaryPath, JSON.stringify(state, null, 2), { encoding: 'utf8', flag: 'wx' });
+      fs.writeFileSync(temporaryPath, text, { encoding: 'utf8', flag: 'wx' });
       fs.renameSync(temporaryPath, statePath);
     } catch (error) {
       if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
@@ -237,7 +273,15 @@ function createLocalMemoryStore(userDataPath, modelId = null) {
     return { query: q, results, total: results.length };
   }
 
-  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation, searchConversations };
+  function getEncryptionStatus() {
+    let onDisk = 'none';
+    if (fs.existsSync(statePath)) {
+      onDisk = fs.readFileSync(statePath, 'utf8').startsWith(ENCRYPTION_PREFIX) ? 'encrypted' : 'plaintext';
+    }
+    return { available: encryptionAvailable(), onDisk };
+  }
+
+  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus };
 }
 
 module.exports = { createLocalMemoryStore };
