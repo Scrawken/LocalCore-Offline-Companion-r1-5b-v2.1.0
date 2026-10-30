@@ -105,10 +105,91 @@
     return targets;
   }
 
+  // ---------------------------------------------------------------------------
+  // Emotion controller (Phase 4): cue priority, anti-flicker dwell, decay.
+  //
+  // Cue priority (highest first): explicit model tag > event cue > sentiment
+  // keyword. Anti-flicker: a new emotion must hold for minDwellMs before it can
+  // be replaced by a lower-or-equal-priority cue. Decay: after decayMs with no
+  // new cue, the emotion returns to neutral.
+  const CUE_PRIORITY = { tag: 3, event: 2, sentiment: 1 };
+
+  function createEmotionController(options = {}) {
+    const minDwellMs = options.minDwellMs ?? 1500;
+    const decayMs = options.decayMs ?? 30000;
+    const neutralMood = 'neutral';
+    // Injectable clock for testing; defaults to Date.now.
+    const clock = typeof options.now === 'function' ? options.now : () => Date.now();
+
+    let current = neutralMood;
+    let currentPriority = 0;
+    let lastChangeAt = clock();
+    let lastCueAt = clock();
+
+    function now() {
+      return clock();
+    }
+
+    function toExpression(mood) {
+      return MOOD_TO_EXPRESSION[mood] || neutralMood;
+    }
+
+    // cue: { mood, source: 'tag' | 'event' | 'sentiment' }
+    function push(cue) {
+      if (!cue || !MOODS.includes(cue.mood)) return { mood: current, expression: toExpression(current), changed: false };
+      const priority = CUE_PRIORITY[cue.source] || 0;
+      const t = now();
+      lastCueAt = t;
+      const dwellElapsed = t - lastChangeAt;
+      const canReplace =
+        cue.mood === current ||
+        priority > currentPriority ||
+        (priority === currentPriority && dwellElapsed >= minDwellMs) ||
+        (priority < currentPriority && dwellElapsed >= minDwellMs);
+      if (!canReplace) {
+        return { mood: current, expression: toExpression(current), changed: false };
+      }
+      const changed = cue.mood !== current;
+      current = cue.mood;
+      currentPriority = priority;
+      if (changed) lastChangeAt = t;
+      return { mood: current, expression: toExpression(current), changed };
+    }
+
+    // Call each frame/tick; decays to neutral after decayMs of no cues.
+    function tick() {
+      const t = now();
+      if (current !== neutralMood && t - lastCueAt >= decayMs) {
+        current = neutralMood;
+        currentPriority = 0;
+        lastChangeAt = t;
+        return { mood: current, expression: toExpression(current), changed: true, decayed: true };
+      }
+      return { mood: current, expression: toExpression(current), changed: false };
+    }
+
+    function reset() {
+      current = neutralMood;
+      currentPriority = 0;
+      lastChangeAt = now();
+      lastCueAt = now();
+    }
+
+    return {
+      push,
+      tick,
+      reset,
+      get mood() { return current; },
+      get expression() { return toExpression(current); }
+    };
+  }
+
   const api = {
     MOODS,
     BASE_EXPRESSIONS,
     MOOD_TO_EXPRESSION,
+    CUE_PRIORITY,
+    createEmotionController,
     moodForReply,
     moodFromTag,
     stripMoodTag,

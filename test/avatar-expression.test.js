@@ -6,7 +6,8 @@ const {
   MOOD_TO_EXPRESSION,
   moodForReply,
   moodFromTag,
-  stripMoodTag
+  stripMoodTag,
+  createEmotionController
 } = require('../renderer/avatar-expression.js');
 
 assert.strictEqual(expressionForReply("Congratulations, that's exciting!"), 'happy');
@@ -43,6 +44,50 @@ assert.strictEqual(moodForReply('The sky is blue'), 'neutral');
 // expressionForReply routes through mood detection then maps to a base expression.
 assert.strictEqual(expressionForReply('[mood:curious] what do you mean?'), 'surprised');
 assert.strictEqual(expressionForReply('I am sorry for your loss'), 'sad');
+
+// --- Emotion controller: cue priority, anti-flicker dwell, decay ---
+{
+  const controller = createEmotionController({ minDwellMs: 1000, decayMs: 5000 });
+  assert.strictEqual(controller.mood, 'neutral', 'starts neutral');
+
+  // Sentiment cue applies from neutral.
+  let r = controller.push({ mood: 'happy', source: 'sentiment' });
+  assert.strictEqual(r.mood, 'happy', 'sentiment cue applies from neutral');
+  assert.strictEqual(r.changed, true);
+
+  // A same/lower-priority cue within the dwell window is ignored (anti-flicker).
+  r = controller.push({ mood: 'sad', source: 'sentiment' });
+  assert.strictEqual(r.mood, 'happy', 'lower-priority cue within dwell is ignored');
+  assert.strictEqual(r.changed, false);
+
+  // A higher-priority explicit tag overrides immediately.
+  r = controller.push({ mood: 'surprised', source: 'tag' });
+  assert.strictEqual(r.mood, 'surprised', 'explicit tag overrides lower-priority mood');
+  assert.strictEqual(r.expression, 'surprised', 'expression follows mood mapping');
+
+  // Invalid mood is rejected.
+  r = controller.push({ mood: 'not-a-mood', source: 'tag' });
+  assert.strictEqual(r.mood, 'surprised', 'invalid mood ignored');
+}
+
+// Decay returns to neutral after decayMs with no cue (injectable clock).
+{
+  let t = 1000000;
+  const controller = createEmotionController({ minDwellMs: 0, decayMs: 5000, now: () => t });
+  controller.push({ mood: 'happy', source: 'event' });
+  assert.strictEqual(controller.mood, 'happy');
+
+  t += 2000; // within decay window
+  assert.strictEqual(controller.tick().decayed, undefined, 'no decay before decayMs');
+  assert.strictEqual(controller.mood, 'happy');
+
+  t += 4000; // past decay window (6000 > 5000)
+  const decayed = controller.tick();
+  assert.strictEqual(decayed.decayed, true, 'decays after decayMs');
+  assert.strictEqual(decayed.mood, 'neutral', 'decay returns to neutral');
+  assert.strictEqual(decayed.expression, 'neutral');
+}
+
 const qiqiFace = {
   morphTargetDictionary: {
     Eye_Default: 0,

@@ -437,6 +437,23 @@
     let cameraStream = null;
     let avatarStage = null;
     let activeAvatarId = null;
+    // Phase 4 emotion controller: cue priority (tag > sentiment), anti-flicker
+    // dwell, and decay back to neutral. Drives the avatar in 'auto' mode.
+    const emotionController = window.localCoreAvatarExpression.createEmotionController({
+      minDwellMs: 1500,
+      decayMs: 30000
+    });
+    // Drive emotion decay: periodically return the avatar toward neutral when no
+    // new cue has arrived. Only acts in 'auto' mode and only on an actual change.
+    setInterval(() => {
+      if (document.getElementById('avatarExpression')?.value !== 'auto') return;
+      const state = emotionController.tick();
+      if (state.decayed && avatarStage?.getExpressionSupport(state.expression)) {
+        try {
+          avatarStage.setExpression(state.expression);
+        } catch { /* expression unsupported on this rig */ }
+      }
+    }, 2000);
 
     function switchTab(tab) {
       ['text', 'image', 'music', 'video', 'memory', 'tests'].forEach(t => {
@@ -651,16 +668,19 @@
         activeMessages.push(assistantMessage);
         showChatMessage(assistantMessage);
         if (document.getElementById('avatarExpression').value === 'auto') {
-          const mood = window.localCoreAvatarExpression.moodForReply(result.content);
-          const expression = window.localCoreAvatarExpression.MOOD_TO_EXPRESSION[mood] || 'neutral';
+          // Cue priority: an explicit [mood:X] tag outranks keyword sentiment.
+          const tagged = window.localCoreAvatarExpression.moodFromTag(result.content);
+          const mood = tagged || window.localCoreAvatarExpression.moodForReply(result.content);
+          const cue = emotionController.push({ mood, source: tagged ? 'tag' : 'sentiment' });
+          const expression = cue.expression;
           try {
-            if (avatarStage?.getExpressionSupport(expression)) {
+            if (cue.changed && avatarStage?.getExpressionSupport(expression)) {
               avatarStage.setExpression(expression);
               document.getElementById('avatar-status').textContent =
-                'Mood: ' + mood + ' → expression: ' + expression + ' (select a fixed expression to override).';
-            } else {
+                'Mood: ' + cue.mood + ' → expression: ' + expression + ' (select a fixed expression to override).';
+            } else if (cue.changed) {
               document.getElementById('avatar-status').textContent =
-                'This reply suggested "' + mood + '" ("' + expression + '"), but the active VRM has no matching facial shape.';
+                'This reply suggested "' + cue.mood + '" ("' + expression + '"), but the active VRM has no matching facial shape.';
             }
           } catch (error) {
             document.getElementById('avatar-status').textContent = 'Could not set avatar expression: ' + error.message;
