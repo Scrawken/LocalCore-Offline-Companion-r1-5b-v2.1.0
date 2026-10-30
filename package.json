@@ -43,7 +43,6 @@
     "@pixiv/three-vrm": "^3.5.5",
     "dotenv": "^16.4.5",
     "electron": "^30.0.0",
-    "sql.js": "^1.15.2",
     "three": "^0.186.1"
   },
   "localAI": {
