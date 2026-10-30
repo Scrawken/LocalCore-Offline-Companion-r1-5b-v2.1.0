@@ -154,8 +154,25 @@ function registerInferenceHandlers() {
 
   ipcMain.handle('inference:vision', (_event, question, imageBytes, mimeType) =>
     analyzeImage(question, imageBytes, mimeType));
-  ipcMain.handle('inference:transcribe', (_event, audioBytes) => transcribeAudio(audioBytes));
-  ipcMain.handle('inference:speak', (_event, text) => synthesizeSpeech(text));
+
+  // Phase 0/3: STT and TTS are heavy pipelines — acquire a governor lease around
+  // each operation so they coexist with the LLM on the floor tier. The lease is
+  // released in finally even on error. If the governor is unavailable (tests),
+  // the operation runs without a lease.
+  const { PipelineKind } = require('./resource-governor');
+  async function withLease(kind, operation) {
+    if (!resourceGovernor) return operation();
+    const lease = await resourceGovernor.acquire(kind, { priority: 5, timeoutMs: 30000 });
+    try {
+      return await operation();
+    } finally {
+      resourceGovernor.release(lease);
+    }
+  }
+  ipcMain.handle('inference:transcribe', (_event, audioBytes) =>
+    withLease(PipelineKind.STT, () => transcribeAudio(audioBytes)));
+  ipcMain.handle('inference:speak', (_event, text) =>
+    withLease(PipelineKind.TTS, () => synthesizeSpeech(text)));
 }
 
 /**
