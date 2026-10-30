@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('localCore', {
       ipcRenderer.invoke('memory:append-message', conversationId, role, content, metadata),
     search: (query, options) => ipcRenderer.invoke('memory:search', query, options),
     encryptionStatus: () => ipcRenderer.invoke('memory:encryption-status'),
+    prune: options => ipcRenderer.invoke('memory:prune', options),
+    wipeAll: () => ipcRenderer.invoke('memory:wipe-all'),
     setRememberEnabled: enabled => ipcRenderer.invoke('memory:set-remember-enabled', enabled),
     saveAsset: (conversationId, type, prompt, bytes, details) =>
       ipcRenderer.invoke('memory:save-asset', conversationId, type, prompt, bytes, details),

@@ -143,6 +143,58 @@ try {
     fs.rmSync(encDir, { recursive: true, force: true });
   }
 
+  // --- Retention / pruning ---
+  const pruneDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-prune-'));
+  try {
+    const pStore = createLocalMemoryStore(pruneDir, 'test-model');
+    const ids = [];
+    for (let i = 0; i < 5; i++) {
+      const c = pStore.createConversation();
+      pStore.appendMessage(c.id, 'user', 'message ' + i);
+      ids.push(c.id);
+    }
+    // createConversation unshifts (newest first) and marks the newest active,
+    // so ids[4] is active and conversations are ordered [ids4, ids3, ... ids0].
+    const result = pStore.pruneConversations({ maxConversations: 2 });
+    assert.strictEqual(result.removed, 3, 'prunes down to the count cap');
+    const kept = pStore.getSnapshot().conversations;
+    assert.strictEqual(kept.length, 2, 'two conversations remain');
+    assert.ok(kept.some(c => c.id === ids[4]), 'active (newest) conversation is never pruned');
+    assert.ok(kept.some(c => c.id === ids[3]), 'second-newest conversation kept');
+
+    // Age-based pruning: backdate one conversation's updatedAt by editing state.
+    const ageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-age-'));
+    try {
+      const aStore = createLocalMemoryStore(ageDir, 'test-model');
+      const old = aStore.createConversation();
+      aStore.appendMessage(old.id, 'user', 'old');
+      const recent = aStore.createConversation(); // becomes active
+      aStore.appendMessage(recent.id, 'user', 'recent');
+      // Manually backdate the 'old' conversation by rewriting state.
+      const stateFile = path.join(ageDir, 'memory.json');
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      const oldConv = state.conversations.find(c => c.id === old.id);
+      oldConv.updatedAt = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+      const ageResult = aStore.pruneConversations({ maxAgeDays: 30 });
+      assert.strictEqual(ageResult.removed, 1, 'age-based prune removes old conversation');
+      assert.strictEqual(ageResult.removedIds[0], old.id, 'the backdated conversation was pruned');
+      assert.ok(aStore.getSnapshot().conversations.some(c => c.id === recent.id), 'recent conversation kept');
+    } finally {
+      fs.rmSync(ageDir, { recursive: true, force: true });
+    }
+
+    assert.throws(() => pStore.pruneConversations({}), /requires maxConversations/);
+
+    // --- Wipe-all ---
+    const wipeResult = pStore.wipeAll();
+    assert.strictEqual(wipeResult.removed, 2, 'wipe-all removes all remaining conversations');
+    assert.strictEqual(pStore.getSnapshot().conversations.length, 0, 'store is empty after wipe-all');
+    assert.strictEqual(pStore.getSnapshot().currentConversationId, null, 'no active conversation after wipe-all');
+  } finally {
+    fs.rmSync(pruneDir, { recursive: true, force: true });
+  }
+
   console.log('Local memory store tests passed.');
 } finally {
   fs.rmSync(testDirectory, { recursive: true, force: true });

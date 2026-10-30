@@ -231,6 +231,60 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return getSnapshot();
   }
 
+  function deleteAssetFiles(conversation) {
+    for (const asset of conversation.assets || []) {
+      const filePath = path.join(assetsPath, asset.fileName);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+  }
+
+  // Retention: prune old conversations beyond a count cap and/or older than a
+  // max age. The active conversation is never pruned. Returns what was removed.
+  function pruneConversations(options = {}) {
+    const maxConversations = Number.isFinite(options.maxConversations) ? options.maxConversations : null;
+    const maxAgeDays = Number.isFinite(options.maxAgeDays) ? options.maxAgeDays : null;
+    if (maxConversations === null && maxAgeDays === null) {
+      throw new Error('pruneConversations requires maxConversations and/or maxAgeDays.');
+    }
+    const state = readState();
+    const cutoff = maxAgeDays !== null ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000 : null;
+    const activeId = state.currentConversationId;
+
+    const keep = [];
+    const removed = [];
+    // conversations are stored newest-first (unshift on create).
+    for (const conversation of state.conversations) {
+      const isActive = conversation.id === activeId;
+      const overCount = maxConversations !== null && keep.length >= maxConversations;
+      const overAge = cutoff !== null && new Date(conversation.updatedAt).getTime() < cutoff;
+      if (!isActive && (overCount || overAge)) {
+        removed.push(conversation);
+      } else {
+        keep.push(conversation);
+      }
+    }
+    if (!removed.length) return { removed: 0, removedIds: [] };
+
+    state.conversations = keep;
+    writeState(state);
+    for (const conversation of removed) deleteAssetFiles(conversation);
+    return { removed: removed.length, removedIds: removed.map(c => c.id) };
+  }
+
+  // Wipe-all: delete every conversation and its generated files in one call.
+  function wipeAll() {
+    const state = readState();
+    const removed = state.conversations.length;
+    for (const conversation of state.conversations) deleteAssetFiles(conversation);
+    writeState({
+      schemaVersion: 1,
+      rememberEnabled: state.rememberEnabled,
+      currentConversationId: null,
+      conversations: []
+    });
+    return { removed };
+  }
+
   // Server-side search: filters conversations in the main process and returns
   // only matches (with a short match context), so the renderer does not need to
   // load the entire history to search. Matches title and message content.
@@ -281,7 +335,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return { available: encryptionAvailable(), onDisk };
   }
 
-  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus };
+  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll };
 }
 
 module.exports = { createLocalMemoryStore };

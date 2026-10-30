@@ -34,6 +34,8 @@ function registerMemoryHandlers() {
   ipcMain.handle('memory:search', (_event, query, options) =>
     memoryStore.searchConversations(query, options));
   ipcMain.handle('memory:encryption-status', () => memoryStore.getEncryptionStatus());
+  ipcMain.handle('memory:prune', (_event, options) => memoryStore.pruneConversations(options));
+  ipcMain.handle('memory:wipe-all', () => memoryStore.wipeAll());
   ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
     memoryStore.setRememberEnabled(enabled));
   ipcMain.handle('memory:save-asset', (_event, conversationId, type, prompt, bytes, details) => {
