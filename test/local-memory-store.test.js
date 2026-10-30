@@ -51,6 +51,43 @@ try {
   assert.strictEqual(fs.existsSync(uploadedImagePath), false, 'conversation deletion removes uploaded images');
 
   assert.throws(() => store.saveAsset('missing', 'image', 'Invalid', bytes), /Conversation not found/);
+
+  // --- Message metadata (mood tagging) ---
+  const metaConversation = store.createConversation();
+  store.appendMessage(metaConversation.id, 'user', 'I am so sleepy today');
+  store.appendMessage(metaConversation.id, 'assistant', 'Get some rest!', { mood: 'sleepy' });
+  const metaSnapshot = store.getSnapshot();
+  const tagged = metaSnapshot.conversations[0].messages.find(m => m.role === 'assistant');
+  assert.strictEqual(tagged.metadata.mood, 'sleepy', 'assistant message records detected mood');
+  assert.strictEqual(metaSnapshot.conversations[0].messages[0].metadata, undefined, 'message without metadata has none');
+
+  // Metadata sanitization: only plain string/number/boolean values are kept.
+  store.appendMessage(metaConversation.id, 'assistant', 'clean check', {
+    mood: 'happy', nested: { bad: true }, list: ['bad'], count: 3, ok: true
+  });
+  const cleaned = store.getSnapshot().conversations[0].messages.find(m => m.content === 'clean check');
+  assert.deepStrictEqual(cleaned.metadata, { mood: 'happy', count: 3, ok: true }, 'metadata drops non-plain values');
+
+  // --- Server-side search ---
+  const searchConv = store.createConversation();
+  store.appendMessage(searchConv.id, 'user', 'Tell me about time travel paradoxes');
+  store.appendMessage(searchConv.id, 'assistant', 'Well, the grandfather paradox is a classic.', { mood: 'thinking' });
+
+  const found = store.searchConversations('time travel');
+  assert.strictEqual(found.total, 1, 'search finds matching conversation');
+  assert.strictEqual(found.results[0].id, searchConv.id, 'search returns the right conversation');
+  assert.ok(found.results[0].snippets[0].text.includes('time travel'), 'snippet includes match context');
+
+  // Snippet mood surfaces when the matching message is the mooded assistant turn.
+  const moodHit = store.searchConversations('grandfather paradox');
+  assert.strictEqual(moodHit.results[0].snippets[0].mood, 'thinking', 'search snippet carries message mood');
+
+  const titleHit = store.searchConversations('grandfather');
+  assert.ok(titleHit.results.some(r => r.id === searchConv.id), 'search matches message content');
+  assert.strictEqual(store.searchConversations('definitely-not-present').total, 0, 'no match returns empty');
+  assert.strictEqual(store.searchConversations('').total, 0, 'empty query returns empty');
+  assert.strictEqual(store.searchConversations(null).total, 0, 'null query returns empty');
+
   console.log('Local memory store tests passed.');
 } finally {
   fs.rmSync(testDirectory, { recursive: true, force: true });

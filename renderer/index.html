@@ -156,6 +156,17 @@
     }
     .memory-entry:last-child { border-bottom: 0; }
     .memory-meta { color: #94a3b8; font-size: 11px; margin-top: 4px; }
+    .memory-snippets { margin-top: 6px; }
+    .memory-snippet {
+      color: #cbd5e1;
+      font-size: 12px;
+      font-style: italic;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 420px;
+    }
     .secondary-btn {
       padding: 7px 10px;
       background: #1e293b;
@@ -470,10 +481,10 @@
       return currentConversationId;
     }
 
-    async function persistMessage(role, content) {
+    async function persistMessage(role, content, metadata) {
       if (!document.getElementById('rememberEnabled').checked) return;
       const conversationId = await ensureConversation();
-      await window.localCore.memory.appendMessage(conversationId, role, content);
+      await window.localCore.memory.appendMessage(conversationId, role, content, metadata);
       memorySnapshot = await window.localCore.memory.load();
       renderMemoryList();
     }
@@ -657,7 +668,10 @@
         if (image && selectedImage) clearSelectedImage();
         await speakAssistantReply(assistantMessage);
         try {
-          await persistMessage('assistant', assistantMessage.content);
+          // Tag assistant messages with the detected mood for emotional context
+          // in Memory (drives future mood-aware features; harmless if unused).
+          const detectedMood = window.localCoreAvatarExpression.moodForReply(result.content);
+          await persistMessage('assistant', assistantMessage.content, { mood: detectedMood });
           if (document.getElementById('rememberEnabled').checked) {
             document.getElementById('memory-status').textContent = 'Conversation saved on this device.';
           }
@@ -1109,15 +1123,35 @@
       stream.scrollTop = stream.scrollHeight;
     }
 
-    function renderMemoryList() {
+    async function renderMemoryList() {
       const list = document.getElementById('memoryList');
       if (!list || !memorySnapshot) return;
-      const query = (document.getElementById('memorySearch').value || '').trim().toLowerCase();
+      const query = (document.getElementById('memorySearch').value || '').trim();
       list.replaceChildren();
-      const conversations = memorySnapshot.conversations.filter(conversation => {
-        const searchable = conversation.title + ' ' + conversation.messages.map(message => message.content).join(' ');
-        return searchable.toLowerCase().includes(query);
-      });
+
+      // Server-side search when a query is present: only matching conversations
+      // are returned from the main process, so the full history is not scanned
+      // in the renderer. Empty query shows the full list from the snapshot.
+      let conversations;
+      let snippetsById = null;
+      if (query) {
+        try {
+          const found = await window.localCore.memory.search(query, { limit: 50 });
+          snippetsById = new Map(found.results.map(r => [r.id, r.snippets]));
+          const byId = new Map(memorySnapshot.conversations.map(c => [c.id, c]));
+          conversations = found.results.map(r => byId.get(r.id)).filter(Boolean);
+        } catch (error) {
+          // Fall back to client-side filtering if search is unavailable.
+          const q = query.toLowerCase();
+          conversations = memorySnapshot.conversations.filter(conversation => {
+            const searchable = conversation.title + ' ' + conversation.messages.map(message => message.content).join(' ');
+            return searchable.toLowerCase().includes(q);
+          });
+        }
+      } else {
+        conversations = memorySnapshot.conversations;
+      }
+
       if (conversations.length === 0) {
         const empty = document.createElement('p');
         empty.style.color = '#94a3b8';
@@ -1136,6 +1170,19 @@
         meta.textContent = new Date(conversation.updatedAt).toLocaleString() + ' · ' +
           conversation.messages.length + ' messages · ' + conversation.assets.length + ' generated items';
         summary.append(title, meta);
+        // Show match snippets when searching.
+        const snippets = snippetsById && snippetsById.get(conversation.id);
+        if (snippets && snippets.length) {
+          const snippetBox = document.createElement('div');
+          snippetBox.className = 'memory-snippets';
+          for (const snippet of snippets) {
+            const line = document.createElement('div');
+            line.className = 'memory-snippet';
+            line.textContent = (snippet.role === 'assistant' ? 'Maura: ' : 'You: ') + snippet.text;
+            snippetBox.appendChild(line);
+          }
+          summary.appendChild(snippetBox);
+        }
         const actions = document.createElement('div');
         const open = document.createElement('button');
         open.className = 'secondary-btn';

@@ -75,7 +75,7 @@ function createLocalMemoryStore(userDataPath, modelId = null) {
     return conversation;
   }
 
-  function appendMessage(conversationId, role, content) {
+  function appendMessage(conversationId, role, content, metadata = null) {
     if (!['user', 'assistant'].includes(role) || typeof content !== 'string' || !content.trim()) {
       throw new Error('A non-empty user or assistant message is required.');
     }
@@ -86,6 +86,16 @@ function createLocalMemoryStore(userDataPath, modelId = null) {
     if (!conversation) throw new Error('Conversation not found.');
 
     const message = { id: randomUUID(), role, content, createdAt: new Date().toISOString() };
+    // Optional metadata (e.g. detected mood for assistant messages). Only plain
+    // objects are stored; anything else is dropped to keep the file clean.
+    if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+      const clean = {};
+      for (const [key, value] of Object.entries(metadata)) {
+        if (value == null) continue;
+        if (['string', 'number', 'boolean'].includes(typeof value)) clean[key] = value;
+      }
+      if (Object.keys(clean).length) message.metadata = clean;
+    }
     conversation.messages.push(message);
     conversation.updatedAt = message.createdAt;
     if (role === 'user' && conversation.title === 'New conversation') {
@@ -185,7 +195,49 @@ function createLocalMemoryStore(userDataPath, modelId = null) {
     return getSnapshot();
   }
 
-  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation };
+  // Server-side search: filters conversations in the main process and returns
+  // only matches (with a short match context), so the renderer does not need to
+  // load the entire history to search. Matches title and message content.
+  function searchConversations(query, options = {}) {
+    const q = (typeof query === 'string' ? query : '').trim().toLowerCase();
+    const limit = Math.max(1, Math.min(200, Number(options.limit) || 50));
+    const state = readState();
+    if (!q) {
+      return { query: '', results: [], total: 0 };
+    }
+    const results = [];
+    for (const conversation of state.conversations) {
+      const titleMatch = conversation.title.toLowerCase().includes(q);
+      const matchedMessages = conversation.messages.filter(message =>
+        message.content.toLowerCase().includes(q));
+      if (!titleMatch && matchedMessages.length === 0) continue;
+      results.push({
+        id: conversation.id,
+        title: conversation.title,
+        updatedAt: conversation.updatedAt,
+        messageCount: conversation.messages.length,
+        assetCount: conversation.assets.length,
+        titleMatch,
+        matchCount: matchedMessages.length,
+        // Short snippets around the first few matches for preview.
+        snippets: matchedMessages.slice(0, 3).map(message => {
+          const content = message.content;
+          const index = content.toLowerCase().indexOf(q);
+          const start = Math.max(0, index - 40);
+          const end = Math.min(content.length, index + q.length + 40);
+          return {
+            role: message.role,
+            mood: message.metadata && message.metadata.mood ? message.metadata.mood : null,
+            text: (start > 0 ? '…' : '') + content.slice(start, end) + (end < content.length ? '…' : '')
+          };
+        })
+      });
+      if (results.length >= limit) break;
+    }
+    return { query: q, results, total: results.length };
+  }
+
+  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation, searchConversations };
 }
 
 module.exports = { createLocalMemoryStore };

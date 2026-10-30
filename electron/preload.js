@@ -6,8 +6,9 @@ contextBridge.exposeInMainWorld('localCore', {
   memory: {
     load: () => ipcRenderer.invoke('memory:load'),
     createConversation: () => ipcRenderer.invoke('memory:create-conversation'),
-    appendMessage: (conversationId, role, content) =>
-      ipcRenderer.invoke('memory:append-message', conversationId, role, content),
+    appendMessage: (conversationId, role, content, metadata) =>
+      ipcRenderer.invoke('memory:append-message', conversationId, role, content, metadata),
+    search: (query, options) => ipcRenderer.invoke('memory:search', query, options),
     setRememberEnabled: enabled => ipcRenderer.invoke('memory:set-remember-enabled', enabled),
     saveAsset: (conversationId, type, prompt, bytes, details) =>
       ipcRenderer.invoke('memory:save-asset', conversationId, type, prompt, bytes, details),
