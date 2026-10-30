@@ -38,6 +38,8 @@ function registerMemoryHandlers() {
   ipcMain.handle('memory:wipe-all', () => memoryStore.wipeAll());
   ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
     memoryStore.setRememberEnabled(enabled));
+  ipcMain.handle('memory:set-disclosure-acknowledged', (_event, acknowledged) =>
+    memoryStore.setDisclosureAcknowledged(acknowledged));
   ipcMain.handle('memory:save-asset', (_event, conversationId, type, prompt, bytes, details) => {
     if (!(bytes instanceof Uint8Array)) throw new Error('Generated content must be sent as bytes.');
     return memoryStore.saveAsset(conversationId, type, prompt, Buffer.from(bytes), details);

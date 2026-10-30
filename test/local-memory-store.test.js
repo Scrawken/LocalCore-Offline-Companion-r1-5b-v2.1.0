@@ -9,6 +9,20 @@ const testDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-te
 try {
   let store = createLocalMemoryStore(testDirectory, 'test-model');
   assert.strictEqual(store.getSnapshot().rememberEnabled, true, 'remembering is enabled by default');
+  assert.strictEqual(store.getSnapshot().disclosureAcknowledged, false, 'disclosure starts unacknowledged');
+
+  // Phase 2: no capture before the first-run disclosure is acknowledged.
+  const preConversation = store.createConversation();
+  assert.strictEqual(store.appendMessage(preConversation.id, 'user', 'before disclosure').saved, false,
+    'messages are not captured before disclosure acknowledgement');
+  assert.strictEqual(
+    store.saveAsset(preConversation.id, 'image', 'blocked', Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+    null,
+    'assets are not captured before disclosure acknowledgement'
+  );
+  store.setDisclosureAcknowledged(true);
+  assert.strictEqual(store.getSnapshot().disclosureAcknowledged, true, 'disclosure acknowledgement persists');
+  store.deleteConversation(preConversation.id); // remove the empty pre-disclosure conversation
 
   const conversation = store.createConversation();
   assert.strictEqual(conversation.modelId, 'test-model', 'new conversations record the active model identity');
@@ -98,6 +112,7 @@ try {
       decrypt: buf => Buffer.from(buf.reverse().toString(), 'base64').toString('utf8')
     };
     const encStore = createLocalMemoryStore(encDir, 'test-model', mockCrypto);
+    encStore.setDisclosureAcknowledged(true);
     const encConv = encStore.createConversation();
     encStore.appendMessage(encConv.id, 'user', 'secret message');
 
@@ -119,6 +134,7 @@ try {
     const plainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-plain-'));
     try {
       const plainStore = createLocalMemoryStore(plainDir, 'test-model'); // no crypto
+      plainStore.setDisclosureAcknowledged(true);
       const plainConv = plainStore.createConversation();
       plainStore.appendMessage(plainConv.id, 'user', 'migrate me');
       assert.strictEqual(plainStore.getEncryptionStatus().onDisk, 'plaintext', 'starts plaintext');
@@ -147,6 +163,7 @@ try {
   const pruneDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-prune-'));
   try {
     const pStore = createLocalMemoryStore(pruneDir, 'test-model');
+    pStore.setDisclosureAcknowledged(true);
     const ids = [];
     for (let i = 0; i < 5; i++) {
       const c = pStore.createConversation();
@@ -166,6 +183,7 @@ try {
     const ageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-age-'));
     try {
       const aStore = createLocalMemoryStore(ageDir, 'test-model');
+      aStore.setDisclosureAcknowledged(true);
       const old = aStore.createConversation();
       aStore.appendMessage(old.id, 'user', 'old');
       const recent = aStore.createConversation(); // becomes active

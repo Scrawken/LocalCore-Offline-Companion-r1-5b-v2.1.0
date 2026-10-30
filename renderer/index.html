@@ -177,9 +177,50 @@
     }
     .memory-asset { padding: 10px 0; border-bottom: 1px solid #1e293b; }
     #memory-status { color: #94a3b8; font-size: 12px; min-height: 18px; }
+    /* First-run memory disclosure overlay (Phase 2) */
+    #disclosureOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.82);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    #disclosureOverlay[hidden] { display: none; }
+    .disclosure-card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      max-width: 520px;
+      padding: 24px;
+      color: #e2e8f0;
+    }
+    .disclosure-card h2 { margin-top: 0; font-size: 18px; }
+    .disclosure-card p { font-size: 13px; line-height: 1.6; color: #cbd5e1; }
+    .disclosure-card .disclosure-actions { display: flex; gap: 10px; margin-top: 18px; }
   </style>
 </head>
 <body>
+  <!-- First-run memory disclosure: shown before any capture until acknowledged. -->
+  <div id="disclosureOverlay" hidden>
+    <div class="disclosure-card" role="dialog" aria-modal="true" aria-labelledby="disclosureTitle">
+      <h2 id="disclosureTitle">Local memory on this device</h2>
+      <p>
+        LocalCore can remember your conversations and the content you generate, stored
+        <strong>only on this device</strong> and encrypted at rest when your system supports it.
+        Nothing is sent anywhere — LocalCore runs offline.
+      </p>
+      <p>
+        You can turn remembering off at any time in the chat tab, search and delete saved
+        conversations in the Memory tab, or wipe everything. Choose how to start:
+      </p>
+      <div class="disclosure-actions">
+        <button class="primary-btn" type="button" id="disclosureAllow">Remember on this device</button>
+        <button class="secondary-btn" type="button" id="disclosureDecline">Don't remember</button>
+      </div>
+    </div>
+  </div>
   <header>
     <div style="display: flex; align-items: center; gap: 12px;">
       <strong style="font-size: 16px; letter-spacing: -0.3px;">LocalCore Desktop</strong>
@@ -1314,12 +1355,40 @@
       document.getElementById('memory-status').textContent = 'Started a new conversation.';
     }
 
+    // First-run memory disclosure (Phase 2): show before any capture until the
+    // user makes a choice. The acknowledgement persists in the (encrypted) store.
+    function showMemoryDisclosureIfNeeded() {
+      if (memorySnapshot.disclosureAcknowledged) return;
+      const overlay = document.getElementById('disclosureOverlay');
+      overlay.hidden = false;
+      const allow = document.getElementById('disclosureAllow');
+      const decline = document.getElementById('disclosureDecline');
+      const finish = async remember => {
+        try {
+          await window.localCore.memory.setDisclosureAcknowledged(true);
+          memorySnapshot.disclosureAcknowledged = true;
+          memorySnapshot.rememberEnabled = await window.localCore.memory.setRememberEnabled(remember);
+          document.getElementById('rememberEnabled').checked = remember;
+          document.getElementById('memory-status').textContent = remember
+            ? 'Remembering is on. New conversations and creations will be saved locally.'
+            : 'Remembering is off. Nothing new will be saved; you can change this anytime.';
+        } catch (error) {
+          document.getElementById('memory-status').textContent = 'Could not save your choice: ' + error.message;
+        } finally {
+          overlay.hidden = true;
+        }
+      };
+      allow.onclick = () => finish(true);
+      decline.onclick = () => finish(false);
+    }
+
     async function initMemory() {
       try {
         activeModelId = await window.localCore.inference.modelId();
         memorySnapshot = await window.localCore.memory.load();
         const remember = document.getElementById('rememberEnabled');
         remember.checked = memorySnapshot.rememberEnabled;
+        showMemoryDisclosureIfNeeded();
         remember.addEventListener('change', async () => {
           try {
             memorySnapshot.rememberEnabled = await window.localCore.memory.setRememberEnabled(remember.checked);

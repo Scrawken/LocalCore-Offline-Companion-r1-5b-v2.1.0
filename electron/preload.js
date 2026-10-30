@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('localCore', {
     prune: options => ipcRenderer.invoke('memory:prune', options),
     wipeAll: () => ipcRenderer.invoke('memory:wipe-all'),
     setRememberEnabled: enabled => ipcRenderer.invoke('memory:set-remember-enabled', enabled),
+    setDisclosureAcknowledged: acknowledged => ipcRenderer.invoke('memory:set-disclosure-acknowledged', acknowledged),
     saveAsset: (conversationId, type, prompt, bytes, details) =>
       ipcRenderer.invoke('memory:save-asset', conversationId, type, prompt, bytes, details),
     readAsset: assetId => ipcRenderer.invoke('memory:read-asset', assetId),

@@ -44,6 +44,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
       return {
         schemaVersion: 1,
         rememberEnabled: true,
+        disclosureAcknowledged: false,
         currentConversationId: null,
         conversations: []
       };
@@ -64,6 +65,8 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     if (state.schemaVersion !== 1 || !Array.isArray(state.conversations)) {
       throw new Error('Local memory file has an unsupported or invalid format.');
     }
+    // Normalize fields added after schemaVersion 1 (backward-compatible defaults).
+    if (typeof state.disclosureAcknowledged !== 'boolean') state.disclosureAcknowledged = false;
 
     // Transparent migration: a plaintext file becomes encrypted on first read
     // once encryption is available.
@@ -117,6 +120,8 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     }
     const state = readState();
     if (!state.rememberEnabled) return { saved: false };
+    // Phase 2: no capture before the first-run disclosure is acknowledged.
+    if (!state.disclosureAcknowledged) return { saved: false, blocked: 'disclosure' };
 
     const conversation = state.conversations.find(item => item.id === conversationId);
     if (!conversation) throw new Error('Conversation not found.');
@@ -150,6 +155,17 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return state.rememberEnabled;
   }
 
+  // First-run disclosure (Phase 2): memory-on disclosure must be acknowledged
+  // before any capture. The flag lives in the (encrypted) store so it persists
+  // across launches and cannot be bypassed by clearing renderer storage.
+  function setDisclosureAcknowledged(acknowledged) {
+    if (typeof acknowledged !== 'boolean') throw new Error('Disclosure acknowledgement must be a boolean.');
+    const state = readState();
+    state.disclosureAcknowledged = acknowledged;
+    writeState(state);
+    return state.disclosureAcknowledged;
+  }
+
   function saveAsset(conversationId, type, prompt, bytes, details = {}) {
     const assetType = ASSET_TYPES[type];
     if (!assetType) throw new Error('Unsupported generated content type.');
@@ -166,6 +182,8 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
 
     const state = readState();
     if (!state.rememberEnabled) return null;
+    // Phase 2: no capture before the first-run disclosure is acknowledged.
+    if (!state.disclosureAcknowledged) return null;
     const conversation = state.conversations.find(item => item.id === conversationId);
     if (!conversation) throw new Error('Conversation not found.');
 
@@ -335,7 +353,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return { available: encryptionAvailable(), onDisk };
   }
 
-  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll };
+  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, setDisclosureAcknowledged, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll };
 }
 
 module.exports = { createLocalMemoryStore };
