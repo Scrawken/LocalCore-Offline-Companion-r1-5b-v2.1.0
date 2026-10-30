@@ -213,6 +213,35 @@ try {
     fs.rmSync(pruneDir, { recursive: true, force: true });
   }
 
+  // --- Memory write log ---
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-log-'));
+  try {
+    const lStore = createLocalMemoryStore(logDir, 'test-model');
+    lStore.setDisclosureAcknowledged(true);
+    const lConv = lStore.createConversation();
+    lStore.appendMessage(lConv.id, 'user', 'hello there');
+    lStore.appendMessage(lConv.id, 'assistant', 'hi!', { mood: 'happy' });
+    lStore.saveAsset(lConv.id, 'image', 'a test image', Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    const log = lStore.getWriteLog();
+    assert.ok(log.length >= 3, 'write log records message and asset captures');
+    assert.strictEqual(log[0].action, 'asset', 'newest entry first');
+    assert.ok(log.some(e => e.action === 'message' && e.summary.includes('mood: happy')), 'message entry records mood');
+    assert.ok(log.every(e => e.at && e.id), 'entries carry timestamp and id');
+
+    lStore.deleteConversation(lConv.id);
+    const afterDelete = lStore.getWriteLog();
+    assert.strictEqual(afterDelete[0].action, 'delete', 'delete is logged');
+
+    lStore.wipeAll();
+    const afterWipe = lStore.getWriteLog();
+    assert.strictEqual(afterWipe.length, 1, 'wipe resets the log to a single wipe entry');
+    assert.strictEqual(afterWipe[0].action, 'wipe', 'wipe entry recorded');
+    assert.strictEqual(lStore.getSnapshot().disclosureAcknowledged, true, 'wipe preserves disclosure acknowledgement');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+
   console.log('Local memory store tests passed.');
 } finally {
   fs.rmSync(testDirectory, { recursive: true, force: true });

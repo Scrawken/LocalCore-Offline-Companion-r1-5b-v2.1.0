@@ -36,6 +36,7 @@ function registerMemoryHandlers() {
   ipcMain.handle('memory:encryption-status', () => memoryStore.getEncryptionStatus());
   ipcMain.handle('memory:prune', (_event, options) => memoryStore.pruneConversations(options));
   ipcMain.handle('memory:wipe-all', () => memoryStore.wipeAll());
+  ipcMain.handle('memory:write-log', (_event, limit) => memoryStore.getWriteLog(limit));
   ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
     memoryStore.setRememberEnabled(enabled));
   ipcMain.handle('memory:set-disclosure-acknowledged', (_event, acknowledged) =>

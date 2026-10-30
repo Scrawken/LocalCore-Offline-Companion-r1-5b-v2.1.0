@@ -46,7 +46,8 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
         rememberEnabled: true,
         disclosureAcknowledged: false,
         currentConversationId: null,
-        conversations: []
+        conversations: [],
+        writeLog: []
       };
     }
 
@@ -67,6 +68,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     }
     // Normalize fields added after schemaVersion 1 (backward-compatible defaults).
     if (typeof state.disclosureAcknowledged !== 'boolean') state.disclosureAcknowledged = false;
+    if (!Array.isArray(state.writeLog)) state.writeLog = [];
 
     // Transparent migration: a plaintext file becomes encrypted on first read
     // once encryption is available.
@@ -91,8 +93,28 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     }
   }
 
+  // Memory write log (Phase 2): a visible, capped record of what was captured or
+  // removed. Newest-first, capped at 200 entries. Each entry: { id, at, action,
+  // summary, conversationId? }. Actions: message, asset, delete, prune, wipe.
+  const WRITE_LOG_CAP = 200;
+  function logWrite(state, action, summary, conversationId = null) {
+    state.writeLog.unshift({
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      action,
+      summary: String(summary).slice(0, 160),
+      ...(conversationId ? { conversationId } : {})
+    });
+    if (state.writeLog.length > WRITE_LOG_CAP) state.writeLog.length = WRITE_LOG_CAP;
+  }
+
   function getSnapshot() {
     return readState();
+  }
+
+  function getWriteLog(limit = 100) {
+    const state = readState();
+    return state.writeLog.slice(0, Math.max(1, Math.min(200, limit)));
   }
 
   function createConversation() {
@@ -143,6 +165,8 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
       conversation.title = content.trim().replace(/\s+/g, ' ').slice(0, 80);
     }
     state.currentConversationId = conversation.id;
+    const moodNote = message.metadata && message.metadata.mood ? ' (mood: ' + message.metadata.mood + ')' : '';
+    logWrite(state, 'message', role + ' message saved' + moodNote + ': ' + content.slice(0, 60), conversationId);
     writeState(state);
     return { saved: true, message };
   }
@@ -207,6 +231,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
       conversation.assets.push(asset);
       conversation.updatedAt = asset.createdAt;
       state.currentConversationId = conversation.id;
+      logWrite(state, 'asset', type + ' saved (' + (bytes.length / 1024).toFixed(1) + ' KB): ' + String(prompt).slice(0, 50), conversationId);
       writeState(state);
       return asset;
     } catch (error) {
@@ -241,6 +266,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
 
     const [conversation] = state.conversations.splice(index, 1);
     if (state.currentConversationId === conversationId) state.currentConversationId = null;
+    logWrite(state, 'delete', 'conversation deleted: ' + conversation.title, conversationId);
     writeState(state);
     for (const asset of conversation.assets) {
       const filePath = path.join(assetsPath, asset.fileName);
@@ -284,6 +310,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     if (!removed.length) return { removed: 0, removedIds: [] };
 
     state.conversations = keep;
+    logWrite(state, 'prune', 'pruned ' + removed.length + ' conversation(s) by retention');
     writeState(state);
     for (const conversation of removed) deleteAssetFiles(conversation);
     return { removed: removed.length, removedIds: removed.map(c => c.id) };
@@ -297,8 +324,15 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     writeState({
       schemaVersion: 1,
       rememberEnabled: state.rememberEnabled,
+      disclosureAcknowledged: state.disclosureAcknowledged,
       currentConversationId: null,
-      conversations: []
+      conversations: [],
+      writeLog: [{
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        action: 'wipe',
+        summary: 'wiped all memory (' + removed + ' conversation(s))'
+      }]
     });
     return { removed };
   }
@@ -353,7 +387,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return { available: encryptionAvailable(), onDisk };
   }
 
-  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, setDisclosureAcknowledged, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll };
+  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, setDisclosureAcknowledged, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll, getWriteLog };
 }
 
 module.exports = { createLocalMemoryStore };

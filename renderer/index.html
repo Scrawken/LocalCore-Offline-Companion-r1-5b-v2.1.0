@@ -437,6 +437,9 @@
       <div class="preview-box" id="memoryList"></div>
       <h4 id="memoryDetailTitle">Choose a conversation</h4>
       <div id="memoryDetail"></div>
+      <h4 style="margin-top:18px;">Activity</h4>
+      <p style="font-size:12px;color:#94a3b8;">A visible record of what LocalCore captured or removed on this device.</p>
+      <div class="preview-box" id="memoryWriteLog" style="max-height:200px;overflow-y:auto;"></div>
     </div>
 
     <!-- TAB 5: SYSTEM TEST SUITE -->
@@ -1205,9 +1208,36 @@
       stream.scrollTop = stream.scrollHeight;
     }
 
+    async function renderWriteLog() {
+      const box = document.getElementById('memoryWriteLog');
+      if (!box) return;
+      try {
+        const entries = await window.localCore.memory.writeLog(100);
+        box.replaceChildren();
+        if (!entries.length) {
+          const empty = document.createElement('p');
+          empty.style.color = '#94a3b8';
+          empty.textContent = 'No activity yet.';
+          box.appendChild(empty);
+          return;
+        }
+        for (const entry of entries) {
+          const row = document.createElement('div');
+          row.className = 'memory-meta';
+          row.style.padding = '3px 0';
+          row.style.borderBottom = '1px solid #1e293b';
+          row.textContent = new Date(entry.at).toLocaleString() + ' — ' + entry.summary;
+          box.appendChild(row);
+        }
+      } catch (error) {
+        box.textContent = 'Could not load activity: ' + error.message;
+      }
+    }
+
     async function renderMemoryList() {
       const list = document.getElementById('memoryList');
       if (!list || !memorySnapshot) return;
+      renderWriteLog();
       const query = (document.getElementById('memorySearch').value || '').trim();
       list.replaceChildren();
 

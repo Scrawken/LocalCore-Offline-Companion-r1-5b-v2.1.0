@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('localCore', {
     encryptionStatus: () => ipcRenderer.invoke('memory:encryption-status'),
     prune: options => ipcRenderer.invoke('memory:prune', options),
     wipeAll: () => ipcRenderer.invoke('memory:wipe-all'),
+    writeLog: limit => ipcRenderer.invoke('memory:write-log', limit),
     setRememberEnabled: enabled => ipcRenderer.invoke('memory:set-remember-enabled', enabled),
     setDisclosureAcknowledged: acknowledged => ipcRenderer.invoke('memory:set-disclosure-acknowledged', acknowledged),
     saveAsset: (conversationId, type, prompt, bytes, details) =>
