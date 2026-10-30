@@ -1,0 +1,58 @@
+# LocalCore-Omni — QLoRA reference config (Stage 1: text persona)
+# REFERENCE ONLY until first training run. Target framework: axolotl or HF TRL + PEFT.
+# Hardware target: RTX 3060 12GB.
+
+base_model: Qwen/Qwen2.5-Omni-3B
+model_type: Qwen2_5OmniForConditionalGeneration
+load_in_4bit: true
+bnb_4bit_quant_type: nf4
+bnb_4bit_compute_dtype: bfloat16
+bnb_4bit_use_double_quant: true
+
+# Stage 1 trains the text/Thinker path only. Vision and speech encoders stay frozen
+# until Stages 2-3 so we do not regress modalities we have not evaluated yet.
+freeze_modules:
+  - visual
+  - audio_tower
+  - talker
+
+adapter: qlora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+datasets:
+  - path: ../data/generated/persona_sft_v1.jsonl   # git-ignored; see data/README.md
+    type: chat_template
+    split: train
+val_set_size: 0.02
+
+sequence_len: 4096          # matches current chat contextLength
+sample_packing: true
+micro_batch_size: 1
+gradient_accumulation_steps: 16
+gradient_checkpointing: true
+
+optimizer: paged_adamw_8bit
+learning_rate: 2.0e-4
+lr_scheduler: cosine
+warmup_steps: 50
+num_epochs: 2
+max_steps: -1
+
+logging_steps: 10
+save_steps: 250
+output_dir: ../checkpoints/omni-qlora-stage1   # git-ignored
+
+# Eval gate reminders (see ../README.md):
+# - npm run test:chat-model / test:chat-context fixtures must pass
+# - persona probe set, human-reviewed
+# - VRAM + latency no worse than current llama.cpp pipeline

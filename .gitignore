@@ -203,6 +203,12 @@ Crash Reports/
 # Blender backup files
 *.blend1
 
+# --- LocalCore AI training artifacts ---
+# Keep READMEs, configs, and manifests committed; ignore data and checkpoints.
+localcore-ai/**/checkpoints/
+localcore-ai/**/data/raw/
+localcore-ai/**/data/generated/
+
 --- Preserve intentional project documentation ---
 
 Markdown files, source files, blueprints, manifests,
