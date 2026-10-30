@@ -28,7 +28,8 @@ const modelApiKey = crypto.randomBytes(32).toString('hex');
 
 function registerMemoryHandlers() {
   ipcMain.handle('memory:load', () => memoryStore.getSnapshot());
-  ipcMain.handle('memory:create-conversation', () => memoryStore.createConversation());
+  ipcMain.handle('memory:get-conversation', (_event, conversationId) => memoryStore.getConversation(conversationId));
+  ipcMain.handle('memory:create-conversation', (_event, options) => memoryStore.createConversation(options));
   ipcMain.handle('memory:append-message', (_event, conversationId, role, content, metadata) =>
     memoryStore.appendMessage(conversationId, role, content, metadata));
   ipcMain.handle('memory:search', (_event, query, options) =>

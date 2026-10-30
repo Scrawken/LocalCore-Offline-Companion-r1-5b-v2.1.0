@@ -242,6 +242,40 @@ try {
     fs.rmSync(logDir, { recursive: true, force: true });
   }
 
+  // --- Ephemeral sessions (Phase 1/2): session-only, never written to disk ---
+  const ephDir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-memory-eph-'));
+  try {
+    const eStore = createLocalMemoryStore(ephDir, 'test-model');
+    eStore.setDisclosureAcknowledged(true);
+    const eph = eStore.createConversation({ ephemeral: true });
+    assert.strictEqual(eph.ephemeral, true, 'ephemeral conversation flagged');
+
+    const appended = eStore.appendMessage(eph.id, 'user', 'session-only message');
+    assert.strictEqual(appended.saved, true, 'ephemeral messages append');
+    assert.strictEqual(appended.ephemeral, true, 'ephemeral append reported');
+
+    // Not in the persisted snapshot.
+    assert.ok(!eStore.getSnapshot().conversations.some(c => c.id === eph.id),
+      'ephemeral conversation absent from persisted snapshot');
+    // But retrievable by id for the live session.
+    const fetched = eStore.getConversation(eph.id);
+    assert.strictEqual(fetched.messages.length, 1, 'ephemeral conversation retrievable by id');
+    assert.strictEqual(fetched.messages[0].content, 'session-only message');
+
+    // Nothing on disk but the (possibly absent) state file: no conversation persisted.
+    const stateFile = path.join(ephDir, 'memory.json');
+    if (fs.existsSync(stateFile)) {
+      const onDisk = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.ok(!onDisk.conversations.some(c => c.id === eph.id), 'ephemeral conversation not written to disk');
+    }
+
+    // Deletion drops it from memory.
+    eStore.deleteConversation(eph.id);
+    assert.strictEqual(eStore.getConversation(eph.id), null, 'deleted ephemeral conversation is gone');
+  } finally {
+    fs.rmSync(ephDir, { recursive: true, force: true });
+  }
+
   console.log('Local memory store tests passed.');
 } finally {
   fs.rmSync(testDirectory, { recursive: true, force: true });

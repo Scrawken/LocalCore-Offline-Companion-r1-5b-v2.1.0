@@ -5,7 +5,8 @@ contextBridge.exposeInMainWorld('localCore', {
   offlineApiUrl: 'http://127.0.0.1:11434',
   memory: {
     load: () => ipcRenderer.invoke('memory:load'),
-    createConversation: () => ipcRenderer.invoke('memory:create-conversation'),
+    getConversation: conversationId => ipcRenderer.invoke('memory:get-conversation', conversationId),
+    createConversation: options => ipcRenderer.invoke('memory:create-conversation', options),
     appendMessage: (conversationId, role, content, metadata) =>
       ipcRenderer.invoke('memory:append-message', conversationId, role, content, metadata),
     search: (query, options) => ipcRenderer.invoke('memory:search', query, options),

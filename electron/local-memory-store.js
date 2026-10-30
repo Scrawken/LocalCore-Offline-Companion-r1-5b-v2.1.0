@@ -31,6 +31,11 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
   fs.mkdirSync(userDataPath, { recursive: true });
   fs.mkdirSync(assetsPath, { recursive: true });
 
+  // Ephemeral sessions (Phase 1/2): conversations flagged ephemeral live only in
+  // this in-memory map and are NEVER written to disk. They support the full
+  // message/asset API for the session, then vanish on app exit or deleteConversation.
+  const ephemeralConversations = new Map();
+
   function encryptionAvailable() {
     try {
       return Boolean(cryptoProvider && cryptoProvider.isAvailable());
@@ -112,13 +117,22 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return readState();
   }
 
+  // Fetch a single conversation by id, checking ephemeral (in-memory) sessions
+  // first, then persisted ones. Returns null if not found.
+  function getConversation(conversationId) {
+    const ephemeral = ephemeralConversations.get(conversationId);
+    if (ephemeral) return { ...ephemeral };
+    const state = readState();
+    const found = state.conversations.find(c => c.id === conversationId);
+    return found ? { ...found } : null;
+  }
+
   function getWriteLog(limit = 100) {
     const state = readState();
     return state.writeLog.slice(0, Math.max(1, Math.min(200, limit)));
   }
 
-  function createConversation() {
-    const state = readState();
+  function createConversation(options = {}) {
     const now = new Date().toISOString();
     const conversation = {
       id: randomUUID(),
@@ -128,8 +142,15 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
       createdAt: now,
       updatedAt: now,
       messages: [],
-      assets: []
+      assets: [],
+      ...(options.ephemeral ? { ephemeral: true } : {})
     };
+    if (options.ephemeral) {
+      // Session-only: held in memory, never written to disk.
+      ephemeralConversations.set(conversation.id, conversation);
+      return conversation;
+    }
+    const state = readState();
     state.conversations.unshift(conversation);
     state.currentConversationId = conversation.id;
     writeState(state);
@@ -140,13 +161,6 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     if (!['user', 'assistant'].includes(role) || typeof content !== 'string' || !content.trim()) {
       throw new Error('A non-empty user or assistant message is required.');
     }
-    const state = readState();
-    if (!state.rememberEnabled) return { saved: false };
-    // Phase 2: no capture before the first-run disclosure is acknowledged.
-    if (!state.disclosureAcknowledged) return { saved: false, blocked: 'disclosure' };
-
-    const conversation = state.conversations.find(item => item.id === conversationId);
-    if (!conversation) throw new Error('Conversation not found.');
 
     const message = { id: randomUUID(), role, content, createdAt: new Date().toISOString() };
     // Optional metadata (e.g. detected mood for assistant messages). Only plain
@@ -159,6 +173,26 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
       }
       if (Object.keys(clean).length) message.metadata = clean;
     }
+
+    // Ephemeral conversation: append in memory only, never touch disk.
+    const ephemeral = ephemeralConversations.get(conversationId);
+    if (ephemeral) {
+      ephemeral.messages.push(message);
+      ephemeral.updatedAt = message.createdAt;
+      if (role === 'user' && ephemeral.title === 'New conversation') {
+        ephemeral.title = content.trim().replace(/\s+/g, ' ').slice(0, 80);
+      }
+      return { saved: true, ephemeral: true, message };
+    }
+
+    const state = readState();
+    if (!state.rememberEnabled) return { saved: false };
+    // Phase 2: no capture before the first-run disclosure is acknowledged.
+    if (!state.disclosureAcknowledged) return { saved: false, blocked: 'disclosure' };
+
+    const conversation = state.conversations.find(item => item.id === conversationId);
+    if (!conversation) throw new Error('Conversation not found.');
+
     conversation.messages.push(message);
     conversation.updatedAt = message.createdAt;
     if (role === 'user' && conversation.title === 'New conversation') {
@@ -260,6 +294,10 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
   }
 
   function deleteConversation(conversationId) {
+    // Ephemeral conversations live only in memory; deleting just drops the map entry.
+    if (ephemeralConversations.delete(conversationId)) {
+      return getSnapshot();
+    }
     const state = readState();
     const index = state.conversations.findIndex(item => item.id === conversationId);
     if (index === -1) throw new Error('Conversation not found.');
@@ -387,7 +425,7 @@ function createLocalMemoryStore(userDataPath, modelId = null, cryptoProvider = n
     return { available: encryptionAvailable(), onDisk };
   }
 
-  return { getSnapshot, createConversation, appendMessage, setRememberEnabled, setDisclosureAcknowledged, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll, getWriteLog };
+  return { getSnapshot, getConversation, createConversation, appendMessage, setRememberEnabled, setDisclosureAcknowledged, saveAsset, readAsset, deleteConversation, searchConversations, getEncryptionStatus, pruneConversations, wipeAll, getWriteLog };
 }
 
 module.exports = { createLocalMemoryStore };
