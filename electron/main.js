@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const { createLocalMemoryStore } = require('./local-memory-store.js');
 const { createAvatarStore } = require('./avatar-store.js');
+const { createPersonaStore } = require('./persona-store.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -18,6 +19,7 @@ const { setResourceGovernor } = require('../engine/llama-cpp-provider.js');
 let daemonProcess = null;
 let mainWindow = null;
 let memoryStore = null;
+let personaStore = null;
 let egressGateway = null;
 let resourceGovernor = null;
 let tierDetector = null;
@@ -39,6 +41,15 @@ function registerMemoryHandlers() {
   ipcMain.handle('memory:read-asset', (_event, assetId) => memoryStore.readAsset(assetId));
   ipcMain.handle('memory:delete-conversation', (_event, conversationId) =>
     memoryStore.deleteConversation(conversationId));
+}
+
+function registerPersonaHandlers() {
+  ipcMain.handle('persona:list', () => personaStore.list());
+  ipcMain.handle('persona:active', () => {
+    const active = personaStore.getActive();
+    return { id: active.id, name: active.name, version: active.version };
+  });
+  ipcMain.handle('persona:system-prompt', () => personaStore.getActiveSystemPrompt());
 }
 
 function registerAvatarHandlers() {
@@ -95,7 +106,20 @@ function registerInferenceHandlers() {
         throw new Error('The chat request contains an invalid message.');
       }
     }
-    
+
+    // Phase 1 S1.2: the active persona is the single source of truth for the
+    // system prompt. Strip any renderer-sent system message and prepend the
+    // persona-assembled prompt. Non-system leading messages (e.g. vision
+    // context) are preserved after the persona prompt.
+    const personaSystemPrompt = personaStore.getActiveSystemPrompt();
+    const nonSystem = messages.filter(m => m.role !== 'system');
+    const extraSystem = messages.filter(m => m.role === 'system' && !/You are (LocalCore|Maura)/.test(m.content));
+    const finalMessages = [
+      { role: 'system', content: personaSystemPrompt },
+      ...extraSystem,
+      ...nonSystem
+    ];
+
     // Phase 0 S0.3: Route through Egress Gateway for audit/consent
     const response = await egressGateway.request({
       method: 'POST',
@@ -104,7 +128,7 @@ function registerInferenceHandlers() {
         'Content-Type': 'application/json',
         Authorization: 'Bearer ' + modelApiKey
       },
-      payload: { model: activeModelId, messages, max_tokens: 512, temperature: 0.7 },
+      payload: { model: activeModelId, messages: finalMessages, max_tokens: 512, temperature: 0.7 },
       scope: 'network:local-inference',
       dataCategory: 'conversation',
       timeoutMs: 5 * 60 * 1000
@@ -268,6 +292,9 @@ app.whenReady().then(() => {
   // Initialize memory store (legacy, will be refactored in Phase 2)
   memoryStore = createLocalMemoryStore(path.join(app.getPath('userData'), 'memory'), activeModelId);
 
+  // Phase 1 S1.1: Initialize persona store (drives the chat system prompt)
+  personaStore = createPersonaStore();
+
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const requestedMedia = details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
     const supportedMediaRequest = webContents === mainWindow?.webContents &&
@@ -279,6 +306,7 @@ app.whenReady().then(() => {
 
   registerMemoryHandlers();
   registerAvatarHandlers();
+  registerPersonaHandlers();
   registerInferenceHandlers();
   registerEgressHandlers(); // Phase 0
   registerGovernorHandlers(); // Phase 0 S0.2

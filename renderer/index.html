@@ -634,8 +634,9 @@
           visualContext = await window.localCore.inference.analyzeImage(p, image.bytes, image.mimeType);
           document.getElementById('memory-status').textContent = 'Image analyzed locally. Preparing chat response...';
         }
+        // The persona system prompt is injected by the main process (Phase 1
+        // S1.2); the renderer only forwards vision context and conversation.
         const chatMessages = [
-          { role: 'system', content: 'You are LocalCore, a helpful private offline assistant. Keep answers clear and concise. Do not treat adult sexual-health topics, consensual intimacy, or non-explicit nudity as inherently off-limits; discuss them maturely and respectfully.' },
           ...(visualContext ? [{
             role: 'system',
             content: 'A local vision model analyzed the image attached to the latest user message. Use this visual description to answer: ' + visualContext

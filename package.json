@@ -19,6 +19,7 @@
     "omni:review": "node localcore-ai/omni/scripts/sample-review.js",
     "verify:chat-model": "node scripts/verify-chat-model.js",
     "test:memory": "node test/local-memory-store.test.js",
+    "test:persona": "node test/persona-store.test.js",
     "auto-install": "cmd /c installer\\auto-install.bat",
     "test": "node test/test-suite.js",
     "verify-integrity": "node installer/updater.js",
@@ -37,6 +38,7 @@
     "@pixiv/three-vrm": "^3.5.5",
     "dotenv": "^16.4.5",
     "electron": "^30.0.0",
+    "sql.js": "^1.15.2",
     "three": "^0.186.1"
   },
   "localAI": {

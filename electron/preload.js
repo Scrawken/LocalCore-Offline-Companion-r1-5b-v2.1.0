@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('localCore', {
     transcribeAudio: audioBytes => ipcRenderer.invoke('inference:transcribe', audioBytes),
     speak: text => ipcRenderer.invoke('inference:speak', text)
   },
+  persona: {
+    list: () => ipcRenderer.invoke('persona:list'),
+    active: () => ipcRenderer.invoke('persona:active'),
+    systemPrompt: () => ipcRenderer.invoke('persona:system-prompt')
+  },
   avatar: {
     list: () => ipcRenderer.invoke('avatar:list'),
     load: id => ipcRenderer.invoke('avatar:load', id),
