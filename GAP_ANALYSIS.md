@@ -228,6 +228,21 @@ The current codebase has a solid foundation (Electron app, llama.cpp inference, 
 - No desktop tools infrastructure
 - Procedural demo generators exist but are not permissioned tools
 
+### Future Capability: Agentic Coding (deferred)
+
+Coding assistance requires two things the current stack does not have:
+
+1. **A code-capable model.** Dolphin 3.0 8B (4K context) handles short snippets and
+   explanations but not multi-file reasoning or long-horizon coherence. A future
+   coding mode would swap in a code-trained model (e.g. Qwen2.5-Coder-7B, which
+   fits the RTX 3060) via the ModelProvider interface.
+2. **An agentic tool layer.** The model must read files, run commands, and observe
+   results — i.e. this phase's tool registry + Action Broker + scoped filesystem,
+   plus an agent loop that feeds tool output back to the model.
+
+Coding is therefore a Phase 5+ capability, gated on the tool-permission system and
+a code model. Not a near-term switch to flip.
+
 ---
 
 ## Phase 6: Optional Cloud - NOT IMPLEMENTED
