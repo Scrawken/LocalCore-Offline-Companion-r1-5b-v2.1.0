@@ -324,6 +324,7 @@
         <textarea id="promptInput" rows="3" placeholder="Enter offline prompt or ask about an attached image..."></textarea>
       </div>
       <button class="primary-btn" id="sendMessageButton" onclick="runTextInference()">Send to Local Model</button>
+      <button class="secondary-btn" type="button" id="cancelStreamButton" hidden>Stop generating</button>
       <button class="secondary-btn" type="button" id="startRecordingButton">Start microphone</button>
       <button class="secondary-btn" type="button" id="stopRecordingButton" hidden>Stop &amp; transcribe</button>
       <button class="secondary-btn" onclick="startNewConversation()">New Conversation</button>
@@ -539,6 +540,58 @@
       stream.scrollTop = stream.scrollHeight;
     }
 
+    // Streaming chat (Phase 1): render tokens into a live bubble as they arrive.
+    // Returns { text, status } when the stream ends. Falls back to the
+    // non-streaming path if the streaming IPC is unavailable.
+    let activeStreamId = null;
+    function streamChatReply(chatMessages) {
+      return new Promise((resolve, reject) => {
+        if (!window.localCore.inference.chatStream) {
+          reject(new Error('streaming unavailable'));
+          return;
+        }
+        const streamId = 'stream-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        activeStreamId = streamId;
+        const cancelButton = document.getElementById('cancelStreamButton');
+        if (cancelButton) cancelButton.hidden = false;
+        const stream = document.getElementById('chat-stream');
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble';
+        const label = document.createElement('strong');
+        label.textContent = 'LocalCore: ';
+        const content = document.createElement('span');
+        bubble.append(label, content);
+        stream.appendChild(bubble);
+        let fullText = '';
+
+        const offToken = window.localCore.inference.onChatToken(data => {
+          if (data.streamId !== streamId) return;
+          fullText += data.text;
+          content.textContent = fullText;
+          stream.scrollTop = stream.scrollHeight;
+        });
+        const offEnd = window.localCore.inference.onChatEnd(data => {
+          if (data.streamId !== streamId) return;
+          cleanup();
+          resolve({ text: fullText, status: data.status });
+        });
+        const offError = window.localCore.inference.onChatError(data => {
+          if (data.streamId !== streamId) return;
+          cleanup();
+          reject(new Error(data.message));
+        });
+        function cleanup() {
+          offToken(); offEnd(); offError();
+          if (activeStreamId === streamId) activeStreamId = null;
+          if (cancelButton) cancelButton.hidden = true;
+        }
+        window.localCore.inference.chatStream(chatMessages, streamId).catch(error => {
+          cleanup();
+          reject(error);
+        });
+      });
+    }
+
     async function ensureConversation() {
       if (currentConversationId) return currentConversationId;
       const conversation = await window.localCore.memory.createConversation();
@@ -733,17 +786,37 @@
           }] : []),
           ...activeMessages.slice(-20)
         ];
-        const result = await window.localCore.inference.chat(chatMessages);
+        // Stream the reply token-by-token into a live bubble; fall back to the
+        // non-streaming path if streaming is unavailable.
+        let rawContent;
+        let usedStreaming = false;
+        try {
+          const streamed = await streamChatReply(chatMessages);
+          rawContent = streamed.text;
+          usedStreaming = true;
+        } catch (streamError) {
+          const result = await window.localCore.inference.chat(chatMessages);
+          rawContent = result.content;
+        }
         // Strip any [mood:X] tag the model emitted so it is not shown or spoken;
         // the tag drives the avatar, not the transcript.
-        const cleanContent = window.localCoreAvatarExpression.stripMoodTag(result.content);
+        const cleanContent = window.localCoreAvatarExpression.stripMoodTag(rawContent);
         const assistantMessage = { role: 'assistant', content: cleanContent };
         activeMessages.push(assistantMessage);
-        showChatMessage(assistantMessage);
+        if (!usedStreaming) showChatMessage(assistantMessage);
+        else {
+          // Update the live bubble to the tag-stripped final text.
+          const stream = document.getElementById('chat-stream');
+          const lastBubble = stream.lastElementChild;
+          if (lastBubble && lastBubble.classList.contains('chat-bubble')) {
+            const span = lastBubble.querySelector('span');
+            if (span) span.textContent = cleanContent;
+          }
+        }
         if (document.getElementById('avatarExpression').value === 'auto') {
           // Cue priority: an explicit [mood:X] tag outranks keyword sentiment.
-          const tagged = window.localCoreAvatarExpression.moodFromTag(result.content);
-          const mood = tagged || window.localCoreAvatarExpression.moodForReply(result.content);
+          const tagged = window.localCoreAvatarExpression.moodFromTag(rawContent);
+          const mood = tagged || window.localCoreAvatarExpression.moodForReply(rawContent);
           const cue = emotionController.push({ mood, source: tagged ? 'tag' : 'sentiment' });
           const expression = cue.expression;
           try {
@@ -764,7 +837,7 @@
         try {
           // Tag assistant messages with the detected mood for emotional context
           // in Memory (drives future mood-aware features; harmless if unused).
-          const detectedMood = window.localCoreAvatarExpression.moodForReply(result.content);
+          const detectedMood = window.localCoreAvatarExpression.moodForReply(rawContent);
           await persistMessage('assistant', assistantMessage.content, { mood: detectedMood });
           if (document.getElementById('rememberEnabled').checked) {
             document.getElementById('memory-status').textContent = 'Conversation saved on this device.';
@@ -1848,6 +1921,11 @@
       });
     }
     document.getElementById('clearImageButton').addEventListener('click', clearSelectedImage);
+    document.getElementById('cancelStreamButton').addEventListener('click', () => {
+      if (activeStreamId && window.localCore.inference.chatCancel) {
+        window.localCore.inference.chatCancel(activeStreamId);
+      }
+    });
     document.getElementById('startRecordingButton').addEventListener('click', startPushToTalk);
     document.getElementById('stopRecordingButton').addEventListener('click', () => stopPushToTalk());
     document.getElementById('refreshMediaDevicesButton').addEventListener('click', async () => {
