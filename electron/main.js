@@ -80,7 +80,8 @@ function registerPersonaHandlers() {
 function registerAvatarHandlers() {
   const avatarStore = createAvatarStore(
     path.join(app.getPath('userData'), 'avatar'),
-    path.join(__dirname, '../models/avatar/LocalCore-Core.vrm')
+    path.join(__dirname, '../models/avatar/LocalCore-Core.vrm'),
+    path.join(__dirname, '../models/avatar/presets')
   );
   ipcMain.handle('avatar:save', async (event, bytes, name) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Avatar storage is only available to the LocalCore window.');

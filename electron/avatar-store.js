@@ -5,6 +5,7 @@ const path = require('path');
 const maximumAvatarBytes = 512 * 1024 * 1024;
 const builtInAvatarId = 'localcore-core';
 const avatarIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const presetIdPattern = /^preset-[a-z0-9-]+$/i;
 
 function validateAvatarBytes(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 12 || bytes.byteLength > maximumAvatarBytes) {
@@ -30,7 +31,33 @@ async function writeAtomically(filePath, bytes) {
   }
 }
 
-function createAvatarStore(directory, defaultAvatarPath = null) {
+// Built-in preset avatars live in a presets directory (e.g. models/avatar/presets).
+// Each .vrm file becomes a selectable built-in with a stable id of
+// 'preset-<filename-stem>'. Presets ship with the app and cannot be deleted.
+async function scanPresets(presetsDirectory) {
+  if (!presetsDirectory) return [];
+  let names;
+  try {
+    names = await fs.readdir(presetsDirectory);
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const presets = [];
+  for (const name of names) {
+    if (!name.toLowerCase().endsWith('.vrm')) continue;
+    const stem = name.replace(/\.vrm$/i, '');
+    const id = 'preset-' + stem.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    presets.push({
+      id,
+      name: stem,
+      filePath: path.join(presetsDirectory, name)
+    });
+  }
+  return presets;
+}
+
+function createAvatarStore(directory, defaultAvatarPath = null, presetsDirectory = null) {
   const avatarPath = path.join(directory, 'active.vrm');
   const libraryPath = path.join(directory, 'library');
   const catalogPath = path.join(directory, 'catalog.json');
@@ -82,16 +109,26 @@ function createAvatarStore(directory, defaultAvatarPath = null) {
     }
   }
 
-  async function activeId(catalog, includeDefault) {
+  async function activeId(catalog, includeDefault, presets) {
     const selection = await readJson(selectionPath, null);
-    if (selection && (selection.id === builtInAvatarId && includeDefault ||
-        catalog.some(item => item.id === selection.id))) return selection.id;
+    if (selection) {
+      const isValid = (selection.id === builtInAvatarId && includeDefault) ||
+        catalog.some(item => item.id === selection.id) ||
+        presets.some(p => p.id === selection.id);
+      if (isValid) return selection.id;
+    }
     if (catalog.length) return catalog[0].id;
-    return includeDefault ? builtInAvatarId : null;
+    if (includeDefault) return builtInAvatarId;
+    if (presets.length) return presets[0].id;
+    return null;
   }
 
-  async function getAvatarPath(id, catalog) {
+  async function getAvatarPath(id, catalog, presets) {
     if (id === builtInAvatarId && await hasDefaultAvatar()) return defaultAvatarPath;
+    if (presetIdPattern.test(id)) {
+      const preset = presets.find(p => p.id === id);
+      return preset ? preset.filePath : null;
+    }
     if (avatarIdPattern.test(id) && catalog.some(item => item.id === id)) {
       return path.join(libraryPath, `${id}.vrm`);
     }
@@ -101,9 +138,10 @@ function createAvatarStore(directory, defaultAvatarPath = null) {
   async function load(id) {
     const catalog = await readCatalog();
     const includeDefault = await hasDefaultAvatar();
-    const requestedId = id || await activeId(catalog, includeDefault);
+    const presets = await scanPresets(presetsDirectory);
+    const requestedId = id || await activeId(catalog, includeDefault, presets);
     if (!requestedId) return null;
-    const filePath = await getAvatarPath(requestedId, catalog);
+    const filePath = await getAvatarPath(requestedId, catalog, presets);
     if (!filePath) return null;
     try {
       return new Uint8Array(await fs.readFile(filePath));
@@ -134,20 +172,24 @@ function createAvatarStore(directory, defaultAvatarPath = null) {
     async list() {
       const catalog = await readCatalog();
       const includeDefault = await hasDefaultAvatar();
+      const presets = await scanPresets(presetsDirectory);
       const avatars = includeDefault
         ? [{ id: builtInAvatarId, name: 'LocalCore Core', builtIn: true }]
         : [];
+      avatars.push(...presets.map(p => ({ id: p.id, name: p.name, builtIn: true, preset: true })));
       avatars.push(...catalog.map(item => ({ ...item, builtIn: false })));
-      return { avatars, activeId: await activeId(catalog, includeDefault) };
+      return { avatars, activeId: await activeId(catalog, includeDefault, presets) };
     },
 
     async select(id) {
       const catalog = await readCatalog();
       const includeDefault = await hasDefaultAvatar();
-      if (id !== builtInAvatarId || !includeDefault) {
-        if (!avatarIdPattern.test(id) || !catalog.some(item => item.id === id)) {
-          throw new Error('That avatar is not available in the local character library.');
-        }
+      const presets = await scanPresets(presetsDirectory);
+      const isBuiltIn = id === builtInAvatarId && includeDefault;
+      const isPreset = presetIdPattern.test(id) && presets.some(p => p.id === id);
+      const isLibrary = avatarIdPattern.test(id) && catalog.some(item => item.id === id);
+      if (!isBuiltIn && !isPreset && !isLibrary) {
+        throw new Error('That avatar is not available in the local character library.');
       }
       await writeAtomically(selectionPath, JSON.stringify({ id }));
       return id;
