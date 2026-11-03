@@ -325,6 +325,7 @@
       <button class="tab-btn" onclick="switchTab('music')">Music Audio</button>
       <button class="tab-btn" onclick="switchTab('video')">Video Motion</button>
       <button class="tab-btn" onclick="switchTab('memory')">Memory</button>
+      <button class="tab-btn" onclick="switchTab('tools')">Tools</button>
       <button class="tab-btn" onclick="switchTab('tests')">System Test Suite</button>
     </div>
   </header>
@@ -518,6 +519,42 @@
       <div class="preview-box" id="memoryWriteLog" style="max-height:200px;overflow-y:auto;"></div>
     </div>
 
+    <!-- TAB: DESKTOP TOOLS (Phase 5) -->
+    <div id="tab-tools" class="card" style="display:none;">
+      <h3 style="margin-top:0;">Desktop Tools &amp; Permissions</h3>
+      <p style="font-size:12px;color:#94a3b8;">
+        Tools act only within folders you grant. Every action shows its exact effect and asks
+        before it runs. The model can propose actions but can never authorize them.
+      </p>
+
+      <div class="input-group">
+        <label for="toolRootPath">Grant a folder (tools can only act inside granted folders)</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="toolRootPath" placeholder="C:\\path\\to\\folder" style="flex:1;">
+          <select id="toolRootMode" style="width:auto;">
+            <option value="read">Read-only</option>
+            <option value="read-write">Read + write</option>
+          </select>
+          <button class="secondary-btn" type="button" id="grantRootButton">Grant folder</button>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label for="toolSelect">Tool</label>
+        <select id="toolSelect" style="width:100%;"></select>
+      </div>
+      <div class="input-group" id="toolPathGroup">
+        <label for="toolPathInput">File or folder path</label>
+        <input type="text" id="toolPathInput" placeholder="Within a granted folder">
+      </div>
+      <button class="primary-btn" type="button" id="invokeToolButton">Run tool</button>
+      <div class="preview-box" id="toolResultBox" style="white-space:pre-wrap;font-family:monospace;font-size:12px;">Run a tool to see the result here.</div>
+
+      <h4 style="margin-top:18px;">Action log</h4>
+      <p style="font-size:12px;color:#94a3b8;">Every action — approved, denied, or failed — is recorded on this device.</p>
+      <div class="preview-box" id="toolAuditLog" style="max-height:200px;overflow-y:auto;font-size:12px;"></div>
+    </div>
+
     <!-- TAB 5: SYSTEM TEST SUITE -->
     <div id="tab-tests" class="card" style="display:none;">
       <h3 style="margin-top:0;">Automated System &amp; Inference Test Suite</h3>
@@ -576,11 +613,11 @@
     }, 2000);
 
     function switchTab(tab) {
-      ['text', 'image', 'music', 'video', 'memory', 'tests'].forEach(t => {
+      ['text', 'image', 'music', 'video', 'memory', 'tools', 'tests'].forEach(t => {
         document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
       });
       document.querySelectorAll('.tab-btn').forEach((btn, idx) => {
-        const tabs = ['text', 'image', 'music', 'video', 'memory', 'tests'];
+        const tabs = ['text', 'image', 'music', 'video', 'memory', 'tools', 'tests'];
         if (tabs[idx] === tab) btn.classList.add('active');
         else btn.classList.remove('active');
       });
@@ -1931,6 +1968,8 @@
 
     initializeAvatar();
     initMemory();
+    initTools();
+    renderToolAudit();
     document.getElementById('loadAvatarButton').addEventListener('click', () => {
       document.getElementById('avatarFileInput').click();
     });
@@ -2051,6 +2090,81 @@
         document.getElementById('approvalAllowSession').onclick = () => respond('allow-session');
         document.getElementById('approvalAllowAlways').onclick = () => respond('allow-always');
       });
+    }
+
+    // Phase 5: Tools tab — grant roots, invoke tools, view the action log.
+    async function initTools() {
+      if (!window.localCore.tools) return;
+      const toolSelect = document.getElementById('toolSelect');
+      const tools = await window.localCore.tools.list();
+      toolSelect.replaceChildren();
+      for (const tool of tools) {
+        const option = document.createElement('option');
+        option.value = tool.id;
+        option.textContent = tool.name + ' (' + tool.risk + ')';
+        toolSelect.appendChild(option);
+      }
+      // Clipboard-read needs no path input.
+      const updatePathVisibility = () => {
+        document.getElementById('toolPathGroup').style.display =
+          toolSelect.value === 'clipboard-read' ? 'none' : '';
+      };
+      toolSelect.addEventListener('change', updatePathVisibility);
+      updatePathVisibility();
+
+      document.getElementById('grantRootButton').addEventListener('click', async () => {
+        const rootPath = document.getElementById('toolRootPath').value.trim();
+        const mode = document.getElementById('toolRootMode').value;
+        if (!rootPath) return;
+        try {
+          await window.localCore.tools.addRoot(rootPath, mode);
+          document.getElementById('toolResultBox').textContent = 'Granted ' + mode + ' access to ' + rootPath;
+        } catch (error) {
+          document.getElementById('toolResultBox').textContent = 'Could not grant folder: ' + error.message;
+        }
+      });
+
+      document.getElementById('invokeToolButton').addEventListener('click', async () => {
+        const toolId = toolSelect.value;
+        const resultBox = document.getElementById('toolResultBox');
+        resultBox.textContent = 'Running ' + toolId + '...';
+        try {
+          const input = toolId === 'clipboard-read' ? {} : { path: document.getElementById('toolPathInput').value.trim() };
+          const result = await window.localCore.tools.invoke({ toolId, input, origin: 'user' });
+          resultBox.textContent = 'Status: ' + result.status + '\n' +
+            (result.error ? 'Error: ' + result.error + '\n' : '') +
+            (result.output ? 'Output: ' + JSON.stringify(result.output, null, 2) : '');
+          renderToolAudit();
+        } catch (error) {
+          resultBox.textContent = 'Tool failed: ' + error.message;
+        }
+      });
+    }
+
+    async function renderToolAudit() {
+      if (!window.localCore.tools) return;
+      const box = document.getElementById('toolAuditLog');
+      try {
+        const entries = await window.localCore.tools.audit(50);
+        box.replaceChildren();
+        if (!entries.length) {
+          box.textContent = 'No actions yet.';
+          return;
+        }
+        for (const entry of entries) {
+          const row = document.createElement('div');
+          row.style.cssText = 'padding:3px 0;border-bottom:1px solid #1e293b;';
+          const statusColor = entry.status === 'executed' ? '#4ade80' : entry.status === 'denied' ? '#f87171' : '#fbbf24';
+          row.textContent = new Date(entry.timestamp).toLocaleString() + ' — ' + (entry.toolId || '?') + ' — ';
+          const status = document.createElement('span');
+          status.style.color = statusColor;
+          status.textContent = entry.status;
+          row.appendChild(status);
+          box.appendChild(row);
+        }
+      } catch (error) {
+        box.textContent = 'Could not load action log: ' + error.message;
+      }
     }
 
     document.getElementById('clearImageButton').addEventListener('click', clearSelectedImage);
