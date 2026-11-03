@@ -109,7 +109,38 @@ function deleteFileTool() {
   await assert.rejects(() => scoped.write(path.join(dir, 'new.txt'), Buffer.from('x')), /read-only/, 'read-only root rejects write');
   await assert.rejects(() => scoped.read('C:\\Windows\\system32\\drivers\\etc\\hosts'), /protected|outside/, 'protected path rejected');
 
+  // --- Undo: quarantine delete + restore ---
+  const undoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-undo-'));
+  fs.writeFileSync(path.join(undoDir, 'todelete.txt'), 'recover me');
+  const undoPerms = createToolPermissionService();
+  undoPerms.grantScope('fs-delete-file', 'fs:delete', 'user');
+  undoPerms.addRoot(undoDir, 'read-write');
+  undoPerms.getScopedFileSystem = () => createScopedFileSystem([{ path: undoDir, mode: 'read-write' }]);
+  const undoAudit = mockAuditLog();
+  const undoBroker = createActionBroker({ registry, permissionService: undoPerms, approvalPrompt: async () => 'allow-once', auditLog: undoAudit });
+  // Register the delete tool with undo wired to this broker.
+  const deleteTool = deleteFileTool();
+  const originalExecute = deleteTool.execute;
+  deleteTool.execute = async (input, ctx) => {
+    const result = await originalExecute(input, ctx);
+    const undoRef = 'undo-' + result.quarantineId;
+    undoBroker.registerUndo(undoRef, async () => ctx.fs.restore(result.quarantineId, input.path));
+    return { ...result, undoRef };
+  };
+  registry.register(deleteTool);
+
+  const deleted = await undoBroker.invoke({ toolId: 'fs-delete-file', input: { path: path.join(undoDir, 'todelete.txt') }, origin: 'user' });
+  assert.strictEqual(deleted.status, 'executed', 'delete executes');
+  assert.ok(!fs.existsSync(path.join(undoDir, 'todelete.txt')), 'file quarantined');
+  assert.ok(deleted.undoRef, 'undoRef returned');
+  const undone = await undoBroker.undo(deleted.undoRef);
+  assert.strictEqual(undone.status, 'undone', 'undo restores');
+  assert.ok(fs.existsSync(path.join(undoDir, 'todelete.txt')), 'file restored');
+  const undoAgain = await undoBroker.undo(deleted.undoRef);
+  assert.strictEqual(undoAgain.status, 'failed', 'undo is single-use');
+
   fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(undoDir, { recursive: true, force: true });
   console.log('Phase 5 Action Broker tests passed.');
 })().catch(error => {
   console.error('Phase 5 test failed:', error);

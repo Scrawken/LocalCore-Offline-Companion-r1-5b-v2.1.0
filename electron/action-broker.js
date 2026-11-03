@@ -128,9 +128,28 @@ function createActionBroker({ registry, permissionService, approvalPrompt, audit
     return text.length > 500 ? text.slice(0, 500) + '…' : text;
   }
 
+  // Undo registry (Phase 5 T4): undoRef -> async undo function. Reversible
+  // actions register an undo handler at execute time.
+  const undoHandlers = new Map();
+
   return {
     invoke,
     preview,
+    registerUndo(undoRef, handler) {
+      if (undoRef && typeof handler === 'function') undoHandlers.set(undoRef, handler);
+    },
+    async undo(undoRef) {
+      const handler = undoHandlers.get(undoRef);
+      if (!handler) return { status: 'failed', error: 'No undo available for that action.' };
+      try {
+        await handler();
+        undoHandlers.delete(undoRef);
+        await auditLog.record({ auditId: randomUUID(), status: 'executed', preview: 'undo', output: undoRef });
+        return { status: 'undone', undoRef };
+      } catch (error) {
+        return { status: 'failed', error: error.message };
+      }
+    },
     async cancel() { /* v1: no mid-execution cancellation of fs tools */ }
   };
 }

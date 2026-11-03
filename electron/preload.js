@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('localCore', {
     grantScope: (toolId, scope, origin) => ipcRenderer.invoke('tools:grant-scope', toolId, scope, origin),
     addRoot: (rootPath, mode) => ipcRenderer.invoke('tools:add-root', rootPath, mode),
     audit: limit => ipcRenderer.invoke('tools:audit', limit),
+    undo: undoRef => ipcRenderer.invoke('tools:undo', undoRef),
     onApprovalRequest: handler => {
       const listener = (_event, data) => handler(data);
       ipcRenderer.on('tools:approval-request', listener);

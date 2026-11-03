@@ -382,6 +382,29 @@ function registerV1Tools() {
   });
 
   toolRegistry.register({
+    id: 'fs-delete-file',
+    name: 'Delete file',
+    description: 'Move a file to quarantine (recoverable)',
+    version: '1.0.0',
+    scopes: ['fs:delete'],
+    risk: 'destructive',
+    reversible: true,
+    inputSchema: { required: ['path'], properties: { path: { type: 'string' } } },
+    async dryRun(input) {
+      return { summary: 'Delete ' + input.path, exactTarget: input.path, effects: ['quarantines 1 file (recoverable)'] };
+    },
+    async execute(input, ctx) {
+      const result = await ctx.fs.delete(input.path);
+      const undoRef = 'undo-' + result.quarantineId;
+      // Register undo: restore the quarantined file.
+      actionBroker.registerUndo(undoRef, async () => {
+        await ctx.fs.restore(result.quarantineId, input.path);
+      });
+      return { quarantineId: result.quarantineId, undoRef };
+    }
+  });
+
+  toolRegistry.register({
     id: 'clipboard-read',
     name: 'Read clipboard',
     description: 'Read the current clipboard text',
@@ -450,6 +473,7 @@ function registerToolHandlers() {
     toolPermissionService.addRoot(rootPath, mode);
   });
   ipcMain.handle('tools:audit', (_event, limit) => actionAuditLog.list(limit));
+  ipcMain.handle('tools:undo', async (_event, undoRef) => actionBroker.undo(undoRef));
 }
 
 async function startDaemon() {
