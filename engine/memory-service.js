@@ -59,9 +59,14 @@ function createMemoryService({ factsStore, summariesStore = null, embedder = nul
         try { factsStore.setFactEmbedding(fact.id, vector); } catch { /* non-fatal */ }
       }
       const similarity = cosine(queryVector, vector);
-      if (similarity < minSimilarity) continue;
-      const score = similarity * recencyScore(fact.createdAt, nowMs) * (fact.confidence ?? 1);
-      scored.push({ fact, similarity, score });
+      // Identity facts (name, people) are always included regardless of
+      // similarity — who the user IS should always be available to the model.
+      const alwaysInclude = fact.category === 'name' || fact.category === 'people';
+      if (!alwaysInclude && similarity < minSimilarity) continue;
+      const score = alwaysInclude
+        ? Number.MAX_SAFE_INTEGER // pin identity facts to the top
+        : similarity * recencyScore(fact.createdAt, nowMs) * (fact.confidence ?? 1);
+      scored.push({ fact, similarity, score, alwaysInclude });
     }
     // Deterministic ordering: score desc, then id asc.
     scored.sort((a, b) => (b.score - a.score) || (a.fact.id < b.fact.id ? -1 : 1));
