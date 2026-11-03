@@ -5,17 +5,22 @@ cd /d "%~dp0"
 echo =====================================================================
 echo  LocalCore AI - Offline Desktop Launcher
 echo =====================================================================
-echo Initializing local offline daemon...
+echo.
 
-REM Start the local HTTP inference & media daemon in background
-start /b "" node engine/local-inference-daemon.js --port 11434
-
-timeout /t 1 /nobreak >nul
-
-REM Launch UI: prefers Electron if available, falls back to standalone browser app mode
-if exist node_modules\electron (
-  start "" npx electron .
-) else (
-  start "" msedge --app="http://localhost:11434" 2>nul || start "" chrome --app="http://localhost:11434" 2>nul || start "" renderer\index.html
+REM The current launch path is the npm development flow, which builds the
+REM avatar runtime and starts the Electron app (the app spawns its own
+REM inference daemon). Requires Node.js 20+ and "npm install" first.
+where node >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Node.js is not installed or not on PATH.
+  echo Install Node.js 20 or newer, then run: npm install
+  pause
+  exit /b 1
 )
+if not exist node_modules (
+  echo Dependencies not installed. Running npm install...
+  call npm install
+)
+echo Starting LocalCore (npm start)...
+call npm start
 exit
