@@ -232,7 +232,9 @@ function registerInferenceHandlers() {
       if (evt.type === 'token') {
         tokenCount++;
         sender.send('inference:chat-token', { streamId, text: evt.text });
-      } else if (evt.type === 'turn-end') {
+      } else if (evt.type === 'turn-end' && evt.turn.role === 'assistant') {
+        // Only the assistant turn's end signals completion — the user turn also
+        // emits turn-end (in send()), which must not resolve the stream early.
         console.log('[chat-stream] turn ended:', evt.turn.status, 'tokens:', tokenCount, 'textLen:', (evt.turn.text || '').length);
         sender.send('inference:chat-end', { streamId, status: evt.turn.status, text: evt.turn.text });
       } else if (evt.type === 'error') {
