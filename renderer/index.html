@@ -795,6 +795,19 @@
           rawContent = streamed.text;
           usedStreaming = true;
         } catch (streamError) {
+          usedStreaming = false;
+        }
+        // Fallback: if streaming produced no text (or failed), use the
+        // non-streaming path so the reply is never blank.
+        if (!rawContent || !rawContent.trim()) {
+          usedStreaming = false;
+          // Remove the empty streaming bubble if one was created.
+          const stream = document.getElementById('chat-stream');
+          const lastBubble = stream.lastElementChild;
+          if (lastBubble && lastBubble.classList.contains('chat-bubble') &&
+              !lastBubble.querySelector('span')?.textContent?.trim()) {
+            lastBubble.remove();
+          }
           const result = await window.localCore.inference.chat(chatMessages);
           rawContent = result.content;
         }

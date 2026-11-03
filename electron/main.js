@@ -227,12 +227,16 @@ function registerInferenceHandlers() {
       ...nonSystem
     ];
 
+    let tokenCount = 0;
     engine.subscribe(evt => {
       if (evt.type === 'token') {
+        tokenCount++;
         sender.send('inference:chat-token', { streamId, text: evt.text });
       } else if (evt.type === 'turn-end') {
+        console.log('[chat-stream] turn ended:', evt.turn.status, 'tokens:', tokenCount, 'textLen:', (evt.turn.text || '').length);
         sender.send('inference:chat-end', { streamId, status: evt.turn.status, text: evt.turn.text });
       } else if (evt.type === 'error') {
+        console.warn('[chat-stream] error:', evt.message);
         sender.send('inference:chat-error', { streamId, message: evt.message });
       }
     });
