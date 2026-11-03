@@ -9,6 +9,7 @@ const { createSafeStorageCrypto } = require('./safe-storage-crypto.js');
 const { createMemoryFactsStore } = require('./memory-facts-store.js');
 const { createChatEngine } = require('../engine/chat-engine.js');
 const { createAttachedLlamaProvider } = require('../engine/attached-llama-provider.js');
+const { createMemoryService } = require('../engine/memory-service.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -24,6 +25,7 @@ let daemonProcess = null;
 let mainWindow = null;
 let memoryStore = null;
 let memoryFactsStore = null;
+let memoryService = null;
 let personaStore = null;
 let egressGateway = null;
 let resourceGovernor = null;
@@ -101,6 +103,22 @@ function registerAvatarHandlers() {
   });
 }
 
+// Phase 2 S2.2: retrieve a memory block for the latest user message. Returns ''
+// when there is nothing relevant, remembering is off, or retrieval fails.
+async function retrieveMemoryBlock(nonSystemMessages) {
+  try {
+    if (!memoryService || !memoryStore) return '';
+    if (!memoryStore.getSnapshot().rememberEnabled) return '';
+    const lastUser = [...nonSystemMessages].reverse().find(m => m.role === 'user');
+    if (!lastUser || !lastUser.content.trim()) return '';
+    const ctx = await memoryService.retrieve(lastUser.content, { topK: 6, tokenBudget: 350 });
+    return ctx.memoryBlock || '';
+  } catch (error) {
+    console.warn('[memory] retrieval failed (non-fatal):', error.message);
+    return '';
+  }
+}
+
 function registerInferenceHandlers() {
   ipcMain.handle('inference:model-id', () => activeModelId);
   ipcMain.handle('inference:status', async () => {
@@ -140,8 +158,15 @@ function registerInferenceHandlers() {
     const personaSystemPrompt = personaStore.getActiveSystemPrompt();
     const nonSystem = messages.filter(m => m.role !== 'system');
     const extraSystem = messages.filter(m => m.role === 'system' && !/You are (LocalCore|Maura)/.test(m.content));
+
+    // Phase 2 S2.2: retrieve relevant memory for the latest user message and
+    // inject it as a system block right after the persona prompt. Best-effort —
+    // retrieval failure never blocks a reply.
+    const memoryBlock = await retrieveMemoryBlock(nonSystem);
+
     const finalMessages = [
       { role: 'system', content: personaSystemPrompt },
+      ...(memoryBlock ? [{ role: 'system', content: memoryBlock }] : []),
       ...extraSystem,
       ...nonSystem
     ];
@@ -194,8 +219,10 @@ function registerInferenceHandlers() {
     const personaSystemPrompt = personaStore.getActiveSystemPrompt();
     const nonSystem = messages.filter(m => m.role !== 'system');
     const extraSystem = messages.filter(m => m.role === 'system' && !/You are (LocalCore|Maura)/.test(m.content));
+    const memoryBlock = await retrieveMemoryBlock(nonSystem);
     const finalMessages = [
       { role: 'system', content: personaSystemPrompt },
+      ...(memoryBlock ? [{ role: 'system', content: memoryBlock }] : []),
       ...extraSystem,
       ...nonSystem
     ];
@@ -431,6 +458,9 @@ app.whenReady().then(() => {
     path.join(app.getPath('userData'), 'memory', 'facts'),
     createSafeStorageCrypto()
   );
+
+  // Phase 2 S2.2: retrieval service over the facts store (semantic, local MiniLM).
+  memoryService = createMemoryService({ factsStore: memoryFactsStore });
 
   // Phase 1 S1.1: Initialize persona store (drives the chat system prompt)
   personaStore = createPersonaStore();

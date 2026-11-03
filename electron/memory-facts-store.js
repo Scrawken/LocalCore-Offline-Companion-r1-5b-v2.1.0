@@ -110,6 +110,19 @@ function createMemoryFactsStore(factsDirectory, cryptoProvider = null) {
     },
 
     /**
+     * Attach or update the embedding for a fact (S2.1: embeddings are records,
+     * stored with their parent). Stored as a plain number array for JSON.
+     */
+    setFactEmbedding(id, vector) {
+      const state = readState();
+      const fact = state.facts.find(f => f.id === id);
+      if (!fact) return false;
+      fact.embedding = Array.from(vector);
+      writeState(state);
+      return true;
+    },
+
+    /**
      * Extract candidate facts from a user message and store them. Async scaffold:
      * runs the pattern pass, validates, dedupes. Returns the facts added.
      */
