@@ -7,6 +7,7 @@ const { createAvatarStore } = require('./avatar-store.js');
 const { createPersonaStore } = require('./persona-store.js');
 const { createSafeStorageCrypto } = require('./safe-storage-crypto.js');
 const { createMemoryFactsStore } = require('./memory-facts-store.js');
+const { createMemorySummariesStore } = require('./memory-summaries-store.js');
 const { createChatEngine } = require('../engine/chat-engine.js');
 const { createAttachedLlamaProvider } = require('../engine/attached-llama-provider.js');
 const { createMemoryService } = require('../engine/memory-service.js');
@@ -25,6 +26,7 @@ let daemonProcess = null;
 let mainWindow = null;
 let memoryStore = null;
 let memoryFactsStore = null;
+let memorySummariesStore = null;
 let memoryService = null;
 let personaStore = null;
 let egressGateway = null;
@@ -49,6 +51,9 @@ function registerMemoryHandlers() {
   ipcMain.handle('memory:facts:delete', (_event, id) => memoryFactsStore.deleteFact(id));
   ipcMain.handle('memory:facts:extract', async (_event, text, sourceMessageId) =>
     memoryFactsStore.extractFromMessage(text, sourceMessageId));
+  // Phase 2 S2.4: summaries layer
+  ipcMain.handle('memory:summaries:list', (_event, conversationId) => memorySummariesStore.list(conversationId));
+  ipcMain.handle('memory:summaries:delete', (_event, id) => memorySummariesStore.deleteSummary(id));
   ipcMain.handle('memory:set-remember-enabled', (_event, enabled) =>
     memoryStore.setRememberEnabled(enabled));
   ipcMain.handle('memory:set-disclosure-acknowledged', (_event, acknowledged) =>
@@ -465,8 +470,14 @@ app.whenReady().then(() => {
     createSafeStorageCrypto()
   );
 
-  // Phase 2 S2.2: retrieval service over the facts store (semantic, local MiniLM).
-  memoryService = createMemoryService({ factsStore: memoryFactsStore });
+  // Phase 2 S2.4: summaries memory layer (past-event summaries, encrypted at rest).
+  memorySummariesStore = createMemorySummariesStore(
+    path.join(app.getPath('userData'), 'memory', 'summaries'),
+    createSafeStorageCrypto()
+  );
+
+  // Phase 2 S2.2: retrieval service over facts + summaries (semantic, local MiniLM).
+  memoryService = createMemoryService({ factsStore: memoryFactsStore, summariesStore: memorySummariesStore });
 
   // Phase 1 S1.1: Initialize persona store (drives the chat system prompt)
   personaStore = createPersonaStore();

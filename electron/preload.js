@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('localCore', {
       delete: id => ipcRenderer.invoke('memory:facts:delete', id),
       extract: (text, sourceMessageId) => ipcRenderer.invoke('memory:facts:extract', text, sourceMessageId)
     },
+    summaries: {
+      list: conversationId => ipcRenderer.invoke('memory:summaries:list', conversationId),
+      delete: id => ipcRenderer.invoke('memory:summaries:delete', id)
+    },
     setRememberEnabled: enabled => ipcRenderer.invoke('memory:set-remember-enabled', enabled),
     setDisclosureAcknowledged: acknowledged => ipcRenderer.invoke('memory:set-disclosure-acknowledged', acknowledged),
     saveAsset: (conversationId, type, prompt, bytes, details) =>

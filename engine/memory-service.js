@@ -33,6 +33,7 @@ function recencyScore(createdAt, nowMs) {
 function createMemoryService({ factsStore, summariesStore = null, embedder = null }) {
   if (!factsStore) throw new Error('MemoryService requires a factsStore.');
   const emb = embedder || createEmbedder();
+  const SUMMARY_LABEL = 'Past conversation';
 
   /**
    * retrieve(query, opts) → MemoryContext
@@ -68,6 +69,23 @@ function createMemoryService({ factsStore, summariesStore = null, embedder = nul
         : similarity * recencyScore(fact.createdAt, nowMs) * (fact.confidence ?? 1);
       scored.push({ fact, similarity, score, alwaysInclude });
     }
+    // Score summaries (similarity x recency; no confidence factor).
+    const scoredSummaries = [];
+    if (summariesStore) {
+      for (const summary of summariesStore.list()) {
+        let vector = summary.embedding ? Float32Array.from(summary.embedding) : null;
+        if (!vector) {
+          vector = await emb.embed(summary.content);
+          try { summariesStore.setSummaryEmbedding && summariesStore.setSummaryEmbedding(summary.id, vector); } catch { /* non-fatal */ }
+        }
+        const similarity = cosine(queryVector, vector);
+        if (similarity < minSimilarity) continue;
+        const score = similarity * recencyScore(summary.createdAt, nowMs);
+        scoredSummaries.push({ summary, similarity, score });
+      }
+      scoredSummaries.sort((a, b) => (b.score - a.score) || (a.summary.id < b.summary.id ? -1 : 1));
+    }
+
     // Deterministic ordering: score desc, then id asc.
     scored.sort((a, b) => (b.score - a.score) || (a.fact.id < b.fact.id ? -1 : 1));
 
@@ -97,13 +115,27 @@ function createMemoryService({ factsStore, summariesStore = null, embedder = nul
       usedTokens += cost;
     }
 
-    const memoryBlock = selected.length
-      ? 'What you remember about the user (use these to answer accurately; do not confuse the user with people they mention):\n' + selected.map(i => formatFact(i.fact)).join('\n')
+    // Budget-aware selection of summaries (after facts; facts are higher value).
+    const selectedSummaries = [];
+    for (const item of scoredSummaries) {
+      const line = '- ' + SUMMARY_LABEL + ': ' + item.summary.content;
+      const cost = estimateTokens(line);
+      if (usedTokens + cost > tokenBudget) continue;
+      selectedSummaries.push(item);
+      usedTokens += cost;
+    }
+
+    const lines = [
+      ...selected.map(i => formatFact(i.fact)),
+      ...selectedSummaries.map(i => '- ' + SUMMARY_LABEL + ': ' + i.summary.content)
+    ];
+    const memoryBlock = lines.length
+      ? 'What you remember about the user (use these to answer accurately; do not confuse the user with people they mention):\n' + lines.join('\n')
       : '';
 
     return {
       facts: selected.map(i => ({ ...i.fact, similarity: i.similarity, score: i.score })),
-      summaries: [], // populated when a summaries store is wired (S2.4)
+      summaries: selectedSummaries.map(i => ({ ...i.summary, similarity: i.similarity, score: i.score })),
       recentTurns: [], // populated by the caller (current conversation)
       tokenEstimate: usedTokens,
       memoryBlock

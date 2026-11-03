@@ -27,6 +27,8 @@
     "test:memory-facts": "node test/memory-facts-store.test.js",
     "test:attached-provider": "node test/attached-llama-provider.test.js",
     "test:memory-service": "node test/memory-service.test.js",
+    "test:memory-summaries": "node test/memory-summaries-store.test.js",
+    "test:memory-summarization": "node test/memory-summarization.test.js",
     "auto-install": "cmd /c installer\\auto-install.bat",
     "test": "node test/test-suite.js",
     "verify-integrity": "node installer/updater.js",
