@@ -138,6 +138,7 @@ models/weights/
 models/checkpoints/
 models/loras/
 models/controlnet/
+models/embeddings/
 huggingface-cache/
 .cache/huggingface/
 .cache/torch/
