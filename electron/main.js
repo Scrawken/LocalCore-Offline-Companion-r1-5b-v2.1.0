@@ -601,11 +601,18 @@ app.whenReady().then(() => {
   // Initialize memory store with at-rest encryption (Phase 2). safeStorage uses
   // Windows DPAPI; when unavailable the store falls back to plaintext and
   // reports encryptionAvailable:false.
-  memoryStore = createLocalMemoryStore(
-    path.join(app.getPath('userData'), 'memory'),
-    activeModelId,
-    createSafeStorageCrypto()
-  );
+  // Phase 2: memory store. Prefer the SQLite store (node:sqlite, Electron 39+);
+  // fall back to the JSON store if node:sqlite is unavailable. The SQLite store
+  // migrates memory.json on first run.
+  const memoryDir = path.join(app.getPath('userData'), 'memory');
+  try {
+    const { createSqliteMemoryStore } = require('./memory-sqlite-store.js');
+    memoryStore = createSqliteMemoryStore(memoryDir, activeModelId);
+    console.log('[memory] using SQLite store (node:sqlite)');
+  } catch (error) {
+    console.warn('[memory] node:sqlite unavailable, falling back to JSON store:', error.message);
+    memoryStore = createLocalMemoryStore(memoryDir, activeModelId, createSafeStorageCrypto());
+  }
 
   // Phase 2: facts memory layer (durable user facts, encrypted at rest).
   memoryFactsStore = createMemoryFactsStore(
