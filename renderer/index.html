@@ -559,6 +559,10 @@
         <label for="toolPathInput">File or folder path</label>
         <input type="text" id="toolPathInput" placeholder="Within a granted folder">
       </div>
+      <div class="input-group" id="toolPromptGroup" style="display:none;">
+        <label for="toolPromptInput">Prompt</label>
+        <input type="text" id="toolPromptInput" placeholder="Describe what to generate">
+      </div>
       <button class="primary-btn" type="button" id="invokeToolButton">Run tool</button>
       <div class="preview-box" id="toolResultBox" style="white-space:pre-wrap;font-family:monospace;font-size:12px;">Run a tool to see the result here.</div>
 
@@ -2116,13 +2120,17 @@
         option.textContent = tool.name + ' (' + tool.risk + ')';
         toolSelect.appendChild(option);
       }
-      // Clipboard-read needs no path input.
-      const updatePathVisibility = () => {
+      // Input visibility by tool: clipboard-read needs nothing; generation tools
+      // need a prompt; fs tools need a path.
+      const updateInputVisibility = () => {
+        const id = toolSelect.value;
+        const isGeneration = id === 'generate-image' || id === 'generate-video';
+        document.getElementById('toolPromptGroup').style.display = isGeneration ? '' : 'none';
         document.getElementById('toolPathGroup').style.display =
-          toolSelect.value === 'clipboard-read' ? 'none' : '';
+          (id === 'clipboard-read' || isGeneration) ? 'none' : '';
       };
-      toolSelect.addEventListener('change', updatePathVisibility);
-      updatePathVisibility();
+      toolSelect.addEventListener('change', updateInputVisibility);
+      updateInputVisibility();
 
       document.getElementById('grantRootButton').addEventListener('click', async () => {
         const rootPath = document.getElementById('toolRootPath').value.trim();
@@ -2141,7 +2149,14 @@
         const resultBox = document.getElementById('toolResultBox');
         resultBox.textContent = 'Running ' + toolId + '...';
         try {
-          const input = toolId === 'clipboard-read' ? {} : { path: document.getElementById('toolPathInput').value.trim() };
+          let input;
+          if (toolId === 'clipboard-read') {
+            input = {};
+          } else if (toolId === 'generate-image' || toolId === 'generate-video') {
+            input = { prompt: document.getElementById('toolPromptInput').value.trim(), conversationId: currentConversationId };
+          } else {
+            input = { path: document.getElementById('toolPathInput').value.trim() };
+          }
           const result = await window.localCore.tools.invoke({ toolId, input, origin: 'user' });
           resultBox.textContent = 'Status: ' + result.status + '\n' +
             (result.error ? 'Error: ' + result.error + '\n' : '') +

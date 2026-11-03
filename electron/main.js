@@ -16,6 +16,7 @@ const { createActionBroker } = require('./action-broker.js');
 const { createToolPermissionService } = require('./tool-permission-service.js');
 const { createActionAuditLog } = require('./action-audit-log.js');
 const { createScopedFileSystem } = require('./scoped-filesystem.js');
+const { createGenerationEngine } = require('../engine/local-generation.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -38,6 +39,7 @@ let toolRegistry = null;
 let actionBroker = null;
 let toolPermissionService = null;
 let actionAuditLog = null;
+let generationEngine = null;
 let egressGateway = null;
 let resourceGovernor = null;
 let tierDetector = null;
@@ -404,6 +406,81 @@ function registerV1Tools() {
     }
   });
 
+  // Image generation tool (Phase 5 + Create). Generates locally, saves to memory.
+  toolRegistry.register({
+    id: 'generate-image',
+    name: 'Generate image',
+    description: 'Generate an image from a text prompt, saved to the conversation',
+    version: '1.0.0',
+    scopes: ['generate:image'],
+    risk: 'moderate',
+    reversible: false,
+    inputSchema: {
+      required: ['prompt'],
+      properties: {
+        prompt: { type: 'string' },
+        width: { type: 'integer' },
+        height: { type: 'integer' },
+        conversationId: { type: 'string' }
+      }
+    },
+    async dryRun(input) {
+      return {
+        summary: 'Generate an image: "' + String(input.prompt).slice(0, 60) + '"',
+        exactTarget: 'local image generator',
+        effects: ['generates 1 image', 'saves it to the conversation']
+      };
+    },
+    async execute(input, ctx) {
+      const result = await generationEngine.generateImage(input);
+      let assetId = null;
+      if (input.conversationId && memoryStore) {
+        const asset = memoryStore.saveAsset(input.conversationId, 'image', input.prompt, Buffer.from(result.bytes), {
+          width: result.width, height: result.height, model: result.model
+        });
+        assetId = asset && asset.id;
+      }
+      return { width: result.width, height: result.height, model: result.model, assetId, sizeBytes: result.bytes.length };
+    }
+  });
+
+  // Video generation tool.
+  toolRegistry.register({
+    id: 'generate-video',
+    name: 'Generate video',
+    description: 'Generate an animated video (GIF) from a text prompt, saved to the conversation',
+    version: '1.0.0',
+    scopes: ['generate:video'],
+    risk: 'moderate',
+    reversible: false,
+    inputSchema: {
+      required: ['prompt'],
+      properties: {
+        prompt: { type: 'string' },
+        frames: { type: 'integer' },
+        conversationId: { type: 'string' }
+      }
+    },
+    async dryRun(input) {
+      return {
+        summary: 'Generate a video: "' + String(input.prompt).slice(0, 60) + '"',
+        exactTarget: 'local video generator',
+        effects: ['generates 1 animated video', 'saves it to the conversation']
+      };
+    },
+    async execute(input, ctx) {
+      const result = await generationEngine.generateVideo(input);
+      let assetId = null;
+      if (input.conversationId && memoryStore) {
+        const asset = memoryStore.saveAsset(input.conversationId, 'video', input.prompt, Buffer.from(result.bytes), {
+          width: result.width, height: result.height, frames: result.frames, model: result.model
+        });
+        assetId = asset && asset.id;
+      }
+      return { width: result.width, height: result.height, frames: result.frames, model: result.model, assetId, sizeBytes: result.bytes.length };
+    }
+  });
+
   toolRegistry.register({
     id: 'clipboard-read',
     name: 'Read clipboard',
@@ -645,6 +722,7 @@ app.whenReady().then(() => {
   toolRegistry = createToolRegistry();
   toolPermissionService = createToolPermissionService();
   actionAuditLog = createActionAuditLog();
+  generationEngine = createGenerationEngine();
   registerV1Tools();
 
   registerMemoryHandlers();

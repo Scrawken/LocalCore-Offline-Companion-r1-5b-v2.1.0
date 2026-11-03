@@ -10,7 +10,8 @@ const TOOL_SCOPES = [
   'fs:read', 'fs:write', 'fs:delete', 'fs:move',
   'shell:execute', 'process:launch',
   'clipboard:read', 'clipboard:write',
-  'screen:capture', 'app:control', 'network:external'
+  'screen:capture', 'app:control', 'network:external',
+  'generate:image', 'generate:video'
 ];
 
 const RISK_LEVELS = ['low', 'moderate', 'high', 'destructive'];
