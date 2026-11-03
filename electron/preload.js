@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld('localCore', {
     chat: messages => ipcRenderer.invoke('inference:chat', messages),
     chatStream: (messages, streamId) => ipcRenderer.invoke('inference:chat-stream', messages, streamId),
     chatCancel: streamId => ipcRenderer.invoke('inference:chat-cancel', streamId),
+    onChatThinking: handler => {
+      const listener = (_event, data) => handler(data);
+      ipcRenderer.on('inference:chat-thinking', listener);
+      return () => ipcRenderer.removeListener('inference:chat-thinking', listener);
+    },
     onChatToken: handler => {
       const listener = (_event, data) => handler(data);
       ipcRenderer.on('inference:chat-token', listener);

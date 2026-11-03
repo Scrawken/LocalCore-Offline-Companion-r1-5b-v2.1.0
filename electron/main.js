@@ -234,7 +234,9 @@ function registerInferenceHandlers() {
 
     let tokenCount = 0;
     engine.subscribe(evt => {
-      if (evt.type === 'token') {
+      if (evt.type === 'thinking') {
+        sender.send('inference:chat-thinking', { streamId, turnId: evt.turnId, at: evt.at });
+      } else if (evt.type === 'token') {
         tokenCount++;
         sender.send('inference:chat-token', { streamId, text: evt.text });
       } else if (evt.type === 'turn-end' && evt.turn.role === 'assistant') {

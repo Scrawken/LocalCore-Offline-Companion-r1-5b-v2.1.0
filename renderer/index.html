@@ -614,6 +614,14 @@
         stream.appendChild(bubble);
         let fullText = '';
 
+        // Phase 1 C2: show a thinking indicator immediately on send, before tokens.
+        const offThinking = window.localCore.inference.onChatThinking
+          ? window.localCore.inference.onChatThinking(data => {
+              if (data.streamId !== streamId) return;
+              if (!fullText) content.textContent = '…';
+            })
+          : () => {};
+
         const offToken = window.localCore.inference.onChatToken(data => {
           if (data.streamId !== streamId) return;
           fullText += data.text;
@@ -631,7 +639,7 @@
           reject(new Error(data.message));
         });
         function cleanup() {
-          offToken(); offEnd(); offError();
+          offThinking(); offToken(); offEnd(); offError();
           if (activeStreamId === streamId) activeStreamId = null;
           if (cancelButton) cancelButton.hidden = true;
         }

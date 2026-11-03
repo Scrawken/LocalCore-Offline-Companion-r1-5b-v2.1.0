@@ -11,16 +11,54 @@
  *   status: 'streaming' | 'complete' | 'cancelled' | 'error'
  *
  * ChatEvent objects emitted to subscribers:
+ *   { type: 'thinking', turnId, at }        (emitted immediately on send, before model work)
  *   { type: 'turn-start', turn }
  *   { type: 'token', turnId, text }         (assistant streaming)
  *   { type: 'turn-end', turn }              (status complete/cancelled/error)
- *   { type: 'error', turnId, message }
+ *   { type: 'error', turnId, code, message, recoverable }
+ *
+ * ChatError codes (Phase 1 §2 taxonomy): provider-unavailable, model-load-failed,
+ * context-overflow, consent-denied, rate-limited, offline, cancelled, unknown.
  *
  * The engine is transport-agnostic: it consumes provider.stream(req) and does
  * not touch IPC, DOM, or persistence. Those layers subscribe to events.
  */
 
 const { randomUUID } = require('crypto');
+
+// Phase 1 §2 ChatError taxonomy.
+const ChatErrorCode = {
+  PROVIDER_UNAVAILABLE: 'provider-unavailable',
+  MODEL_LOAD_FAILED: 'model-load-failed',
+  CONTEXT_OVERFLOW: 'context-overflow',
+  CONSENT_DENIED: 'consent-denied',
+  RATE_LIMITED: 'rate-limited',
+  OFFLINE: 'offline',
+  CANCELLED: 'cancelled',
+  UNKNOWN: 'unknown'
+};
+
+// Map an arbitrary provider error to a ChatError code + recoverable flag.
+function classifyError(error) {
+  const message = (error && error.message) || String(error);
+  const lower = message.toLowerCase();
+  if (lower.includes('cancel')) return { code: ChatErrorCode.CANCELLED, recoverable: true };
+  if (lower.includes('context') && (lower.includes('overflow') || lower.includes('length') || lower.includes('too long'))) {
+    return { code: ChatErrorCode.CONTEXT_OVERFLOW, recoverable: true };
+  }
+  if (lower.includes('load') || lower.includes('gguf') || lower.includes('model file')) {
+    return { code: ChatErrorCode.MODEL_LOAD_FAILED, recoverable: false };
+  }
+  if (lower.includes('consent') || lower.includes('denied')) return { code: ChatErrorCode.CONSENT_DENIED, recoverable: false };
+  if (lower.includes('rate') || lower.includes('429')) return { code: ChatErrorCode.RATE_LIMITED, recoverable: true };
+  if (lower.includes('econnrefused') || lower.includes('fetch failed') || lower.includes('network') || lower.includes('offline')) {
+    return { code: ChatErrorCode.OFFLINE, recoverable: true };
+  }
+  if (lower.includes('unavailable') || lower.includes('not registered') || lower.includes('no default')) {
+    return { code: ChatErrorCode.PROVIDER_UNAVAILABLE, recoverable: false };
+  }
+  return { code: ChatErrorCode.UNKNOWN, recoverable: false };
+}
 
 function createChatEngine(provider, options = {}) {
   if (!provider || typeof provider.stream !== 'function') {
@@ -79,7 +117,16 @@ function createChatEngine(provider, options = {}) {
     const assistantTurn = addTurn('assistant', 'streaming');
     activeTurnId = assistantTurn.id;
     activeController = new AbortController();
+
+    // Phase 1 C2: 'thinking' is emitted immediately, before any model load or
+    // lease acquisition, exactly once per turn, carrying turnId + timestamp.
+    emit({ type: 'thinking', turnId: assistantTurn.id, at: Date.now() });
     emit({ type: 'turn-start', turn: { ...assistantTurn } });
+
+    // Phase 1 F2: in-progress marker for crash recovery. The marker is set when
+    // generation begins and cleared on completion; on startup, any turn still
+    // marked in-progress is discarded (see recover()).
+    assistantTurn.inProgress = true;
 
     const messages = toProviderMessages();
     try {
@@ -103,8 +150,10 @@ function createChatEngine(provider, options = {}) {
       if (assistantTurn.status === 'streaming') assistantTurn.status = 'complete';
     } catch (error) {
       assistantTurn.status = 'error';
-      emit({ type: 'error', turnId: assistantTurn.id, message: error.message });
+      const { code, recoverable } = classifyError(error);
+      emit({ type: 'error', turnId: assistantTurn.id, code, message: error.message, recoverable });
     } finally {
+      assistantTurn.inProgress = false;
       activeController = null;
       activeTurnId = null;
       emit({ type: 'turn-end', turn: { ...assistantTurn } });
@@ -190,6 +239,23 @@ function createChatEngine(provider, options = {}) {
       }
     },
 
+    /**
+     * Crash recovery (Phase 1 D3/F2): discard any assistant turn still marked
+     * in-progress (interrupted by a crash/close). Idempotent; safe to call on
+     * every startup. Returns the number of discarded turns.
+     */
+    recover() {
+      let discarded = 0;
+      for (const turn of turns) {
+        if (turn.role === 'assistant' && turn.inProgress) {
+          turn.status = 'cancelled';
+          turn.inProgress = false;
+          discarded++;
+        }
+      }
+      return discarded;
+    },
+
     /** Clear all turns (new session). */
     reset() {
       if (activeController) activeController.abort();
@@ -199,4 +265,4 @@ function createChatEngine(provider, options = {}) {
   };
 }
 
-module.exports = { createChatEngine };
+module.exports = { createChatEngine, ChatErrorCode, classifyError };

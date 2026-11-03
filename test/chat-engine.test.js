@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { createChatEngine } = require('../engine/chat-engine.js');
+const { createChatEngine, ChatErrorCode, classifyError } = require('../engine/chat-engine.js');
 
 // Mock ModelProvider: streams a fixed set of tokens, honoring abort.
 function createMockProvider(tokensPerReply = ['Hello', ' there', '!']) {
@@ -124,6 +124,69 @@ async function run() {
     assert.ok(contents.includes('new question'), 'new user turn present');
     // Order: system first, then conversation.
     assert.strictEqual(call.messages[0].role, 'system', 'system message first');
+  }
+
+  // --- thinking event: emitted immediately on send, once, before tokens ---
+  {
+    const provider = createMockProvider(['slow', 'reply']);
+    const engine = createChatEngine(provider);
+    const events = [];
+    engine.subscribe(e => events.push(e));
+    await engine.send('hello');
+    const thinkingEvents = events.filter(e => e.type === 'thinking');
+    assert.strictEqual(thinkingEvents.length, 1, 'thinking emitted exactly once');
+    assert.ok(thinkingEvents[0].turnId, 'thinking carries turnId');
+    assert.ok(typeof thinkingEvents[0].at === 'number', 'thinking carries timestamp');
+    // thinking must come before the first token.
+    const firstThinking = events.findIndex(e => e.type === 'thinking');
+    const firstToken = events.findIndex(e => e.type === 'token');
+    assert.ok(firstThinking >= 0 && (firstToken === -1 || firstThinking < firstToken), 'thinking precedes tokens');
+  }
+
+  // --- error taxonomy: provider errors classified with code + recoverable ---
+  {
+    const failing = { modelId: 'm', async* stream() { throw new Error('context length exceeded'); } };
+    const engine = createChatEngine(failing);
+    const events = [];
+    engine.subscribe(e => events.push(e));
+    const turn = await engine.send('hi');
+    assert.strictEqual(turn.status, 'error');
+    const errEvent = events.find(e => e.type === 'error');
+    assert.strictEqual(errEvent.code, ChatErrorCode.CONTEXT_OVERFLOW, 'context error classified');
+    assert.strictEqual(errEvent.recoverable, true, 'context overflow is recoverable');
+  }
+
+  // classifyError mapping
+  assert.strictEqual(classifyError(new Error('cancelled by user')).code, 'cancelled');
+  assert.strictEqual(classifyError(new Error('model file not found')).code, 'model-load-failed');
+  assert.strictEqual(classifyError(new Error('fetch failed')).code, 'offline');
+  assert.strictEqual(classifyError(new Error('something weird')).code, 'unknown');
+
+  // --- crash recovery: in-progress assistant turn discarded on recover() ---
+  {
+    // Provider that never finishes (simulates a crash mid-stream).
+    const hanging = {
+      modelId: 'm',
+      async* stream() {
+        yield { type: 'token', text: 'partial' };
+        await new Promise(() => {}); // never resolves
+      }
+    };
+    const engine = createChatEngine(hanging);
+    const sendPromise = engine.send('hi');
+    // Let the first token arrive so the turn is in-progress.
+    await new Promise(resolve => setImmediate(resolve));
+    // Simulate crash: do not resolve; call recover() as on startup.
+    const discarded = engine.recover();
+    assert.strictEqual(discarded, 1, 'in-progress assistant turn discarded on recover');
+    const turns = engine.getTurns();
+    const assistant = turns.find(t => t.role === 'assistant');
+    assert.strictEqual(assistant.status, 'cancelled', 'recovered turn marked cancelled');
+    // recover() is idempotent.
+    assert.strictEqual(engine.recover(), 0, 'recover is idempotent');
+    // Clean up the hanging promise.
+    engine.cancel();
+    sendPromise.catch(() => {});
   }
 
   console.log('ChatEngine tests passed.');
