@@ -343,33 +343,45 @@
           <select id="avatarCharacterSelect" aria-label="Select a local VRM character" style="width:auto;min-width:190px;">
             <option value="">Loading characters...</option>
           </select>
-          <input type="file" id="avatarFileInput" accept=".vrm,model/gltf-binary" hidden>
-          <button class="secondary-btn" type="button" id="loadAvatarButton">Import VRM character</button>
-          <button class="secondary-btn" type="button" id="fitAvatarButton">Reset view</button>
-          <button class="secondary-btn" type="button" id="torsoAvatarButton">Torso view</button>
-          <button class="secondary-btn" type="button" id="fullBodyAvatarButton">Full-body view</button>
-          <label style="display:flex;align-items:center;gap:5px;margin:0;">
-            <input type="checkbox" id="avatarTorsoOverride" disabled>
-            Flat torso preview
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;margin:0;">
-            <input type="checkbox" id="avatarFacePreview" disabled>
-            Face detail preview
-          </label>
-          <label for="avatarExpression" style="margin:0;">Expression</label>
-          <select id="avatarExpression" style="width:auto;">
-            <option value="auto">Automatic (best-effort)</option>
-            <option value="neutral">Neutral</option>
-            <option value="happy">Happy</option>
-            <option value="sad">Sad</option>
-            <option value="angry">Angry</option>
-            <option value="relaxed">Relaxed</option>
-            <option value="surprised">Surprised</option>
-          </select>
         </div>
         <div class="avatar-stage" title="Drag to rotate; use the mouse wheel to zoom">
           <canvas id="avatarCanvas" aria-label="Local 3D talking avatar"></canvas>
         </div>
+        <details id="avatarSettings" style="margin-top:10px;">
+          <summary style="cursor:pointer;color:#38bdf8;font-size:12px;font-weight:600;">Avatar settings</summary>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <input type="file" id="avatarFileInput" accept=".vrm,model/gltf-binary" hidden>
+              <button class="secondary-btn" type="button" id="loadAvatarButton">Import VRM character</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:12px;color:#94a3b8;">View:</span>
+              <button class="secondary-btn" type="button" id="fitAvatarButton">Reset view</button>
+              <button class="secondary-btn" type="button" id="torsoAvatarButton">Torso view</button>
+              <button class="secondary-btn" type="button" id="fullBodyAvatarButton">Full-body view</button>
+            </div>
+            <label style="display:flex;align-items:center;gap:7px;margin:0;font-size:12px;">
+              <input type="checkbox" id="avatarTorsoOverride" disabled>
+              Flat torso preview
+            </label>
+            <label style="display:flex;align-items:center;gap:7px;margin:0;font-size:12px;">
+              <input type="checkbox" id="avatarFacePreview" disabled>
+              Face detail preview
+            </label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label for="avatarExpression" style="margin:0;font-size:12px;">Expression</label>
+              <select id="avatarExpression" style="width:auto;">
+                <option value="auto">Automatic (best-effort)</option>
+                <option value="neutral">Neutral</option>
+                <option value="happy">Happy</option>
+                <option value="sad">Sad</option>
+                <option value="angry">Angry</option>
+                <option value="relaxed">Relaxed</option>
+                <option value="surprised">Surprised</option>
+              </select>
+            </div>
+          </div>
+        </details>
         <div id="avatar-status" role="status" aria-live="polite" class="memory-meta" style="margin-top:8px;">
           Choose a character from the local library or import a rigged .vrm file. Drag to rotate, scroll to zoom, or switch between torso and full-body views.
         </div>

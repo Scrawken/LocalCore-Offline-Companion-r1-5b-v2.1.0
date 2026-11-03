@@ -39875,6 +39875,23 @@ void main() {
       }
       this.head = this.vrm.humanoid.getNormalizedBoneNode("head");
       this.torso = this.vrm.humanoid.getNormalizedBoneNode("chest") || this.vrm.humanoid.getNormalizedBoneNode("spine");
+      const getBone = (name) => {
+        try {
+          return this.vrm.humanoid.getNormalizedBoneNode(name);
+        } catch {
+          return null;
+        }
+      };
+      this.leftUpperArm = getBone("leftUpperArm");
+      this.rightUpperArm = getBone("rightUpperArm");
+      this.leftLowerArm = getBone("leftLowerArm");
+      this.rightLowerArm = getBone("rightLowerArm");
+      this.leftShoulder = getBone("leftShoulder");
+      this.rightShoulder = getBone("rightShoulder");
+      this.bindPose = /* @__PURE__ */ new Map();
+      for (const bone of [this.leftUpperArm, this.rightUpperArm, this.leftLowerArm, this.rightLowerArm, this.leftShoulder, this.rightShoulder, this.head, this.torso]) {
+        if (bone) this.bindPose.set(bone, { rotation: bone.rotation.clone() });
+      }
       this.vrm.scene.traverse((object) => {
         if ((0, import_avatar_material_override.isTorsoSkinTarget)(object)) this.torsoMeshes.push(object);
         if ((0, import_avatar_face_material_preview.isFaceMaterialTarget)(object)) this.faceMeshes.push(object);
@@ -40114,6 +40131,22 @@ void main() {
       if (this.head) {
         this.head.rotation.y = Math.sin(elapsed * 0.55) * 0.045;
         this.head.rotation.x = Math.sin(elapsed * 0.38) * 0.018 + breath * 6e-3;
+      }
+      const armSway = Math.sin(elapsed * 0.5) * 0.02;
+      const restDown = 1.15;
+      const elbowBend = 0.25;
+      if (this.bindPose) {
+        const applyRest = (bone, base, addZ) => {
+          if (!bone || !this.bindPose.has(bone)) return;
+          const bind = this.bindPose.get(bone).rotation;
+          bone.rotation.x = bind.x;
+          bone.rotation.y = bind.y;
+          bone.rotation.z = bind.z + addZ;
+        };
+        if (this.leftUpperArm) applyRest(this.leftUpperArm, null, restDown + armSway);
+        if (this.rightUpperArm) applyRest(this.rightUpperArm, null, -(restDown + armSway));
+        if (this.leftLowerArm) applyRest(this.leftLowerArm, null, elbowBend);
+        if (this.rightLowerArm) applyRest(this.rightLowerArm, null, -elbowBend);
       }
       if (this.vrm) {
         const manager = this.vrm.expressionManager;
