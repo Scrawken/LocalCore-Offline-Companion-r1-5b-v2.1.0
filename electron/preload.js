@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('localCore', {
     addRoot: (rootPath, mode) => ipcRenderer.invoke('tools:add-root', rootPath, mode),
     audit: limit => ipcRenderer.invoke('tools:audit', limit),
     undo: undoRef => ipcRenderer.invoke('tools:undo', undoRef),
+    detectAndInvoke: (userText, conversationId) => ipcRenderer.invoke('tools:detect-and-invoke', userText, conversationId),
     onApprovalRequest: handler => {
       const listener = (_event, data) => handler(data);
       ipcRenderer.on('tools:approval-request', listener);

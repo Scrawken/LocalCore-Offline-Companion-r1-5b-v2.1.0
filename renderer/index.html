@@ -997,6 +997,28 @@
         } catch (memoryError) {
           document.getElementById('memory-status').textContent = 'Model replied, but could not save conversation: ' + memoryError.message;
         }
+        // Phase 5 + chat integration: if the user's message asked for a tool
+        // action (image/video generation), invoke it via the broker. Maura
+        // proposes; the approval dialog asks you to authorize.
+        if (window.localCore.tools && window.localCore.tools.detectAndInvoke) {
+          try {
+            const toolCall = await window.localCore.tools.detectAndInvoke(userContent, currentConversationId);
+            if (toolCall && toolCall.detected) {
+              const statusEl = document.getElementById('memory-status');
+              if (toolCall.result.status === 'executed') {
+                statusEl.textContent = 'Generated and saved to this conversation.';
+                memorySnapshot = await window.localCore.memory.load();
+                renderMemoryList();
+              } else if (toolCall.result.status === 'denied') {
+                statusEl.textContent = 'Generation denied.';
+              } else if (toolCall.result.status === 'failed') {
+                statusEl.textContent = 'Generation failed: ' + (toolCall.result.error || 'unknown error');
+              }
+            }
+          } catch (toolError) {
+            console.warn('Tool invocation failed:', toolError.message);
+          }
+        }
       } catch (error) {
         document.getElementById('memory-status').textContent = 'Local inference failed: ' + error.message;
         showChatMessage({ role: 'assistant', content: 'Local model error: ' + error.message });

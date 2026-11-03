@@ -551,6 +551,27 @@ function registerToolHandlers() {
   });
   ipcMain.handle('tools:audit', (_event, limit) => actionAuditLog.list(limit));
   ipcMain.handle('tools:undo', async (_event, undoRef) => actionBroker.undo(undoRef));
+
+  // Phase 5 + chat integration: detect a tool call in a user message and invoke
+  // it via the broker with origin 'model' (Maura proposed it; the user approves).
+  const { detectToolCall } = require('../engine/tool-call-detector.js');
+  ipcMain.handle('tools:detect-and-invoke', async (_event, userText, conversationId) => {
+    const detected = detectToolCall(userText);
+    if (!detected) return { detected: false };
+    // Grant the generation scope for model origin if not already granted, so the
+    // broker reaches the approval prompt instead of denying outright. The user
+    // still approves each action; the scope grant only gates *whether* it prompts.
+    if (!toolPermissionService.isGranted(detected.toolId, detected.scope, 'model')) {
+      toolPermissionService.grantScope(detected.toolId, detected.scope, 'model');
+    }
+    const result = await actionBroker.invoke({
+      toolId: detected.toolId,
+      input: { ...detected.input, conversationId },
+      origin: 'model',
+      conversationId
+    });
+    return { detected: true, toolId: detected.toolId, result };
+  });
 }
 
 async function startDaemon() {
