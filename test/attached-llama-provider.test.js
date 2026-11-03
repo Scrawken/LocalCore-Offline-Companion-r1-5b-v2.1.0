@@ -43,6 +43,33 @@ function startMockServer() {
     assert.strictEqual(tokens, 'Hello world', 'tokens stream and accumulate');
     assert.ok(chunks.some(c => c.type === 'done' && c.finishReason === 'stop'), 'done event with stop reason');
 
+    // Batched events: multiple SSE events in a single write (the live-server case).
+    const batchServer = http.createServer((req, res) => {
+      if (req.url === '/v1/chat/completions') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        // All events in ONE chunk, no trailing blank line on the last.
+        res.end(
+          'data: {"choices":[{"delta":{"content":"Bat"}}]}\n\n' +
+          'data: {"choices":[{"delta":{"content":"ched"}}]}\n\n' +
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        );
+      }
+    });
+    await new Promise(r => batchServer.listen(0, '127.0.0.1', r));
+    try {
+      const batchProvider = createAttachedLlamaProvider({
+        baseUrl: 'http://127.0.0.1:' + batchServer.address().port, modelId: 'm'
+      });
+      const batchChunks = [];
+      for await (const chunk of batchProvider.stream({ messages: [{ role: 'user', content: 'hi' }] })) {
+        batchChunks.push(chunk);
+      }
+      const batchTokens = batchChunks.filter(c => c.type === 'token').map(c => c.text).join('');
+      assert.strictEqual(batchTokens, 'Batched', 'batched SSE events in one read are parsed');
+    } finally {
+      batchServer.close();
+    }
+
     console.log('Attached llama provider tests passed.');
   } finally {
     server.close();

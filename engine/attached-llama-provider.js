@@ -64,16 +64,26 @@ function createAttachedLlamaProvider({ baseUrl, apiKey, modelId, maxTokens = 512
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      // SSE events are separated by a blank line (\n\n or \r\n\r\n). Split on
+      // event boundaries, not single newlines, so tokens are never lost when
+      // multiple events arrive in one read or an event spans a read boundary.
+      function processEvent(eventText) {
+        const dataLines = eventText.split(/\r?\n/)
+          .filter(l => l.startsWith('data:'))
+          .map(l => l.slice(5).trimStart());
+        if (!dataLines.length) return null;
+        return dataLines.join('\n');
+      }
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep the partial line
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const data = trimmed.slice(5).trim();
+        let boundary;
+        while ((boundary = buffer.search(/\r?\n\r?\n/)) >= 0) {
+          const eventText = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary).replace(/^\r?\n\r?\n/, '');
+          const data = processEvent(eventText);
+          if (data === null) continue;
           if (data === '[DONE]') {
             yield { type: 'done', finishReason: 'stop' };
             return;
@@ -87,8 +97,17 @@ function createAttachedLlamaProvider({ baseUrl, apiKey, modelId, maxTokens = 512
               yield { type: 'done', finishReason };
               return;
             }
-          } catch { /* skip malformed SSE line */ }
+          } catch { /* skip malformed SSE event */ }
         }
+      }
+      // Flush any trailing event without a closing blank line.
+      const tail = processEvent(buffer);
+      if (tail && tail !== '[DONE]') {
+        try {
+          const parsed = JSON.parse(tail);
+          const token = parsed.choices?.[0]?.delta?.content;
+          if (token) yield { type: 'token', text: token };
+        } catch { /* ignore */ }
       }
       yield { type: 'done', finishReason: 'stop' };
     }
