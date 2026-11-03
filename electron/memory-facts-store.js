@@ -22,11 +22,13 @@ const MAX_FACT_CHARS = 300;
 // Each match yields { category, content }. This is a scaffold — a local model
 // extractor can replace the regex pass later without changing the store.
 const FACT_PATTERNS = [
-  { category: 'preference', regex: /\b(?:i (?:really )?(?:like|love|prefer|enjoy))\b ([^.;!?]{3,80})/i },
-  { category: 'dislike', regex: /\b(?:i (?:really )?(?:hate|dislike|can't stand|don't like))\b ([^.;!?]{3,80})/i },
-  { category: 'fact', regex: /\b(?:i (?:am|work as|live in|have|own))\b ([^.;!?]{3,80})/i },
-  { category: 'goal', regex: /\b(?:i (?:want to|plan to|'m trying to|am trying to|hope to))\b ([^.;!?]{3,80})/i },
-  { category: 'name', regex: /\b(?:my name is|call me)\b ([^.;!?]{2,40})/i }
+  { category: 'preference', regex: /\b(?:i (?:really )?(?:like|love|prefer|enjoy)(?: to| playing| playing)?)\b ([^.;!?]{3,80})/i },
+  { category: 'preference', regex: /\b(?:my (?:favorite|favourite) (?:\w+ )?(?:is|are))\b ([^.;!?]{3,80})/i },
+  { category: 'dislike', regex: /\b(?:i (?:really )?(?:hate|dislike|can't stand|don't like|do not like))\b ([^.;!?]{3,80})/i },
+  { category: 'fact', regex: /\b(?:i (?:am|work as|work in|live in|have|own|play))\b ([^.;!?]{3,80})/i },
+  { category: 'goal', regex: /\b(?:i (?:want to|plan to|'m trying to|am trying to|hope to|'m learning|am learning))\b ([^.;!?]{3,80})/i },
+  { category: 'name', regex: /(?:my name is|call me)\s+([A-Z][a-z]{1,30})/i },
+  { category: 'people', regex: /\bmy (?:friend|wife|husband|partner|brother|sister|mom|dad|mother|father)\s+(?:is\s+|named\s+)?([A-Z][a-z]{1,30})\b/i }
 ];
 
 function normalizeFact(text) {
