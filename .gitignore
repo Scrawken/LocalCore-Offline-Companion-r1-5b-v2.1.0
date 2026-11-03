@@ -153,6 +153,9 @@ generated-audio/
 generated-video/
 outputs/
 ComfyUI/output/
+
+# Generated test/demo artifacts (keep sample_* and benchmark files)
+output/**/generated_*
 ComfyUI/temp/
 ComfyUI/input/
 
