@@ -23,7 +23,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'localcore-retrieval-test-'));
   assert.ok(ctx.facts.length > 0, 'retrieves at least one fact');
   const contents = ctx.facts.map(f => f.content);
   assert.ok(contents.some(c => c.includes('hiking')), 'hiking fact retrieved for outdoor query');
-  assert.ok(ctx.memoryBlock.includes('Things you remember about the user'), 'memory block formatted');
+  assert.ok(ctx.memoryBlock.includes('What you remember about the user'), 'memory block formatted');
+  assert.ok(ctx.memoryBlock.includes('User likes:'), 'memory block labels facts by category');
   assert.ok(ctx.tokenEstimate > 0, 'token estimate reported');
 
   // Determinism: same query twice → identical ordering.

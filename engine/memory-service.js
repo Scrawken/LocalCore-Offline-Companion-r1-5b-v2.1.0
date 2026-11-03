@@ -71,12 +71,26 @@ function createMemoryService({ factsStore, summariesStore = null, embedder = nul
     // Deterministic ordering: score desc, then id asc.
     scored.sort((a, b) => (b.score - a.score) || (a.fact.id < b.fact.id ? -1 : 1));
 
-    // Budget-aware selection.
+    // Budget-aware selection. Each line is labeled by category so the model
+    // knows WHAT each fact refers to (e.g. user's name vs. user's friend) —
+    // bare unlabeled facts cause identity confusion.
+    const CATEGORY_LABELS = {
+      name: "User's name",
+      people: 'Person in the user\'s life',
+      preference: 'User likes',
+      dislike: 'User dislikes',
+      fact: 'About the user',
+      goal: 'User wants to'
+    };
+    function formatFact(fact) {
+      const label = CATEGORY_LABELS[fact.category] || 'About the user';
+      return '- ' + label + ': ' + fact.content;
+    }
     const selected = [];
     let usedTokens = 0;
     for (const item of scored) {
       if (selected.length >= topK) break;
-      const line = '- ' + item.fact.content;
+      const line = formatFact(item.fact);
       const cost = estimateTokens(line);
       if (usedTokens + cost > tokenBudget) continue;
       selected.push(item);
@@ -84,7 +98,7 @@ function createMemoryService({ factsStore, summariesStore = null, embedder = nul
     }
 
     const memoryBlock = selected.length
-      ? 'Things you remember about the user:\n' + selected.map(i => '- ' + i.fact.content).join('\n')
+      ? 'What you remember about the user (use these to answer accurately; do not confuse the user with people they mention):\n' + selected.map(i => formatFact(i.fact)).join('\n')
       : '';
 
     return {
