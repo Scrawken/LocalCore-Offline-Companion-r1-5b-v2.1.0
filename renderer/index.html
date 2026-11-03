@@ -268,6 +268,26 @@
       </div>
     </div>
   </div>
+
+  <!-- Phase 5: Action approval dialog. Shows the exact effect; Deny is default. -->
+  <div id="approvalOverlay" hidden>
+    <div class="disclosure-card" role="dialog" aria-modal="true" aria-labelledby="approvalTitle" style="max-width:560px;">
+      <h2 id="approvalTitle">Approve action</h2>
+      <p id="approvalOrigin" style="font-size:12px;color:#fbbf24;"></p>
+      <div style="font-size:13px;line-height:1.6;color:#cbd5e1;">
+        <div><strong>Action:</strong> <span id="approvalSummary"></span></div>
+        <div style="margin-top:6px;"><strong>Target:</strong> <code id="approvalTarget" style="color:#38bdf8;word-break:break-all;"></code></div>
+        <div id="approvalEffectsWrap" style="margin-top:6px;"><strong>Effects:</strong><ul id="approvalEffects" style="margin:4px 0 0 18px;"></ul></div>
+        <div style="margin-top:6px;"><strong>Risk:</strong> <span id="approvalRisk"></span> · <strong>Reversible:</strong> <span id="approvalReversible"></span></div>
+      </div>
+      <div class="disclosure-actions" style="flex-wrap:wrap;">
+        <button class="secondary-btn" type="button" id="approvalDeny">Deny</button>
+        <button class="secondary-btn" type="button" id="approvalAllowOnce">Allow once</button>
+        <button class="secondary-btn" type="button" id="approvalAllowSession">Allow for session</button>
+        <button class="primary-btn" type="button" id="approvalAllowAlways">Always allow</button>
+      </div>
+    </div>
+  </div>
   <header>
     <div class="header-row">
       <strong style="font-size: 16px; letter-spacing: -0.3px;">LocalCore Desktop</strong>
@@ -1999,6 +2019,40 @@
         }
       });
     }
+    // Phase 5: action approval dialog. The broker sends a preview; the user's
+    // decision is returned. Deny is the default focus.
+    if (window.localCore.tools && window.localCore.tools.onApprovalRequest) {
+      window.localCore.tools.onApprovalRequest(({ promptId, preview }) => {
+        const overlay = document.getElementById('approvalOverlay');
+        document.getElementById('approvalSummary').textContent = preview.summary || '';
+        document.getElementById('approvalTarget').textContent = preview.exactTarget || '';
+        document.getElementById('approvalRisk').textContent = preview.risk || 'unknown';
+        document.getElementById('approvalReversible').textContent = preview.reversible ? 'yes' : 'no';
+        document.getElementById('approvalOrigin').textContent =
+          'Requested by: ' + (preview.origin === 'model' ? 'Maura (the model)' : preview.origin === 'user' ? 'you' : preview.origin);
+        const effectsList = document.getElementById('approvalEffects');
+        effectsList.replaceChildren();
+        for (const effect of preview.effects || []) {
+          const li = document.createElement('li');
+          li.textContent = effect;
+          effectsList.appendChild(li);
+        }
+        // Always-allow is hidden for destructive/high-risk (never a standing grant).
+        document.getElementById('approvalAllowAlways').style.display =
+          (preview.risk === 'destructive' || preview.risk === 'high') ? 'none' : '';
+        overlay.hidden = false;
+        document.getElementById('approvalDeny').focus();
+        const respond = decision => {
+          overlay.hidden = true;
+          window.localCore.tools.respondToApproval(promptId, decision);
+        };
+        document.getElementById('approvalDeny').onclick = () => respond('deny');
+        document.getElementById('approvalAllowOnce').onclick = () => respond('allow-once');
+        document.getElementById('approvalAllowSession').onclick = () => respond('allow-session');
+        document.getElementById('approvalAllowAlways').onclick = () => respond('allow-always');
+      });
+    }
+
     document.getElementById('clearImageButton').addEventListener('click', clearSelectedImage);
     document.getElementById('cancelStreamButton').addEventListener('click', () => {
       if (activeStreamId && window.localCore.inference.chatCancel) {

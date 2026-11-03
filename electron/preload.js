@@ -65,6 +65,20 @@ contextBridge.exposeInMainWorld('localCore', {
     getMode: () => ipcRenderer.invoke('window:get-mode'),
     setMode: mode => ipcRenderer.invoke('window:set-mode', mode)
   },
+  tools: {
+    list: () => ipcRenderer.invoke('tools:list'),
+    invoke: req => ipcRenderer.invoke('tools:invoke', req),
+    preview: req => ipcRenderer.invoke('tools:preview', req),
+    grantScope: (toolId, scope, origin) => ipcRenderer.invoke('tools:grant-scope', toolId, scope, origin),
+    addRoot: (rootPath, mode) => ipcRenderer.invoke('tools:add-root', rootPath, mode),
+    audit: limit => ipcRenderer.invoke('tools:audit', limit),
+    onApprovalRequest: handler => {
+      const listener = (_event, data) => handler(data);
+      ipcRenderer.on('tools:approval-request', listener);
+      return () => ipcRenderer.removeListener('tools:approval-request', listener);
+    },
+    respondToApproval: (promptId, decision) => ipcRenderer.invoke('tools:approval-response', promptId, decision)
+  },
   persona: {
     list: () => ipcRenderer.invoke('persona:list'),
     active: () => ipcRenderer.invoke('persona:active'),

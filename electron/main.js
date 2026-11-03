@@ -11,6 +11,11 @@ const { createMemorySummariesStore } = require('./memory-summaries-store.js');
 const { createChatEngine } = require('../engine/chat-engine.js');
 const { createAttachedLlamaProvider } = require('../engine/attached-llama-provider.js');
 const { createMemoryService } = require('../engine/memory-service.js');
+const { createToolRegistry } = require('./tool-registry.js');
+const { createActionBroker } = require('./action-broker.js');
+const { createToolPermissionService } = require('./tool-permission-service.js');
+const { createActionAuditLog } = require('./action-audit-log.js');
+const { createScopedFileSystem } = require('./scoped-filesystem.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
@@ -29,6 +34,10 @@ let memoryFactsStore = null;
 let memorySummariesStore = null;
 let memoryService = null;
 let personaStore = null;
+let toolRegistry = null;
+let actionBroker = null;
+let toolPermissionService = null;
+let actionAuditLog = null;
 let egressGateway = null;
 let resourceGovernor = null;
 let tierDetector = null;
@@ -335,6 +344,114 @@ function registerGovernorHandlers() {
   ipcMain.handle('tier:system-info', () => tierDetector.getSystemInfo());
 }
 
+// Phase 5: register the v1 tool set (Files + Clipboard; no shell/screen per T1).
+function registerV1Tools() {
+  toolRegistry.register({
+    id: 'fs-read-file',
+    name: 'Read file',
+    description: 'Read a file within a granted folder',
+    version: '1.0.0',
+    scopes: ['fs:read'],
+    risk: 'low',
+    reversible: false,
+    inputSchema: { required: ['path'], properties: { path: { type: 'string' } } },
+    async dryRun(input) {
+      return { summary: 'Read ' + input.path, exactTarget: input.path, effects: ['reads 1 file'] };
+    },
+    async execute(input, ctx) {
+      const buf = await ctx.fs.read(input.path);
+      return { length: buf.length, preview: buf.toString('utf8').slice(0, 2000) };
+    }
+  });
+
+  toolRegistry.register({
+    id: 'fs-list-dir',
+    name: 'List folder',
+    description: 'List the contents of a granted folder',
+    version: '1.0.0',
+    scopes: ['fs:read'],
+    risk: 'low',
+    reversible: false,
+    inputSchema: { required: ['path'], properties: { path: { type: 'string' } } },
+    async dryRun(input) {
+      return { summary: 'List ' + input.path, exactTarget: input.path, effects: ['lists folder contents'] };
+    },
+    async execute(input, ctx) {
+      return { entries: await ctx.fs.list(input.path) };
+    }
+  });
+
+  toolRegistry.register({
+    id: 'clipboard-read',
+    name: 'Read clipboard',
+    description: 'Read the current clipboard text',
+    version: '1.0.0',
+    scopes: ['clipboard:read'],
+    risk: 'low',
+    reversible: false,
+    inputSchema: { properties: {} },
+    async dryRun() {
+      return { summary: 'Read the clipboard', exactTarget: 'system clipboard', effects: ['reads clipboard text'] };
+    },
+    async execute() {
+      const { clipboard } = require('electron');
+      return { text: clipboard.readText() };
+    }
+  });
+}
+
+// Phase 5: tool IPC + the approval prompt round-trip to the renderer.
+function registerToolHandlers() {
+  // Pending approval prompts: promptId -> resolve
+  const pendingApprovals = new Map();
+
+  // The approval prompt: send the preview to the renderer, wait for a decision.
+  // Timeout defaults to deny (Phase 5 §4.1).
+  async function approvalPrompt(preview) {
+    if (!mainWindow) return 'deny';
+    const promptId = randomUUID();
+    return new Promise(resolve => {
+      pendingApprovals.set(promptId, resolve);
+      mainWindow.webContents.send('tools:approval-request', { promptId, preview });
+      // 60s timeout -> deny.
+      setTimeout(() => {
+        if (pendingApprovals.delete(promptId)) resolve('deny');
+      }, 60000);
+    });
+  }
+
+  // Provide the scoped filesystem to tools via the permission service.
+  toolPermissionService.getScopedFileSystem = () =>
+    createScopedFileSystem(toolPermissionService.listRoots());
+
+  actionBroker = createActionBroker({
+    registry: toolRegistry,
+    permissionService: toolPermissionService,
+    approvalPrompt,
+    auditLog: actionAuditLog
+  });
+
+  ipcMain.handle('tools:list', () => toolRegistry.list().map(t => ({
+    id: t.id, name: t.name, description: t.description, risk: t.risk, scopes: t.scopes
+  })));
+  ipcMain.handle('tools:invoke', async (_event, req) => actionBroker.invoke(req));
+  ipcMain.handle('tools:preview', async (_event, req) => actionBroker.preview(req));
+  ipcMain.handle('tools:approval-response', (_event, promptId, decision) => {
+    const resolve = pendingApprovals.get(promptId);
+    if (resolve) {
+      pendingApprovals.delete(promptId);
+      resolve(decision);
+    }
+  });
+  ipcMain.handle('tools:grant-scope', (_event, toolId, scope, origin) => {
+    toolPermissionService.grantScope(toolId, scope, origin || 'user');
+  });
+  ipcMain.handle('tools:add-root', (_event, rootPath, mode) => {
+    toolPermissionService.addRoot(rootPath, mode);
+  });
+  ipcMain.handle('tools:audit', (_event, limit) => actionAuditLog.list(limit));
+}
+
 async function startDaemon() {
   // Phase 0 S0.3: Acquire LLM lease before starting daemon
   const { PipelineKind } = require('./resource-governor');
@@ -493,6 +610,12 @@ app.whenReady().then(() => {
     callback(supportedMediaRequest);
   });
 
+  // Phase 5: Desktop Tools — registry, permission service, action broker, audit.
+  toolRegistry = createToolRegistry();
+  toolPermissionService = createToolPermissionService();
+  actionAuditLog = createActionAuditLog();
+  registerV1Tools();
+
   registerMemoryHandlers();
   registerAvatarHandlers();
   registerPersonaHandlers();
@@ -500,6 +623,7 @@ app.whenReady().then(() => {
   registerEgressHandlers(); // Phase 0
   registerGovernorHandlers(); // Phase 0 S0.2
   registerWindowHandlers(); // Phase 4
+  registerToolHandlers(); // Phase 5
   startDaemon();
   createWindow();
 });
