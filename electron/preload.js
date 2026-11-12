@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('localCore', {
     saveAsset: (conversationId, type, prompt, bytes, details) =>
       ipcRenderer.invoke('memory:save-asset', conversationId, type, prompt, bytes, details),
     readAsset: assetId => ipcRenderer.invoke('memory:read-asset', assetId),
+    getAssetBuffer: assetId => ipcRenderer.invoke('memory:get-asset-buffer', assetId),
     deleteConversation: conversationId => ipcRenderer.invoke('memory:delete-conversation', conversationId)
   },
   inference: {

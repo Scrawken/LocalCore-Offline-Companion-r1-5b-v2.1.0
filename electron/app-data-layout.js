@@ -29,7 +29,12 @@ function getAppDataPath() {
     return path.join(process.env.APPDATA, 'LocalCore');
   }
   // Fallback for non-Windows (shouldn't happen in production)
-  return path.join(require('electron').app.getPath('userData'), 'LocalCore');
+  // Note: Electron's app.getPath('userData') is only available when app is ready
+  // For now, use a safe fallback that doesn't require Electron during module load
+  if (process.platform === 'win32') {
+    return path.join(process.env.USERPROFILE || process.env.HOME, 'AppData', 'Roaming', 'LocalCore');
+  }
+  return path.join(process.env.HOME || '.', '.localcore');
 }
 
 /**

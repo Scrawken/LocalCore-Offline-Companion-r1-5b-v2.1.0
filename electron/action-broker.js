@@ -10,7 +10,14 @@
  * (prompt if required, timeout = deny) → execute with scoped handles → audit.
  */
 
-const { randomUUID } = require('crypto');
+// Helper function to generate UUIDs (compatible with Electron)
+function randomUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 // Approval determination per Phase 5 §4.2.
 function requiresApproval({ risk, origin, hasStandingGrant }) {

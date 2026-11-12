@@ -1,4 +1,4 @@
-# LocalCore Offline Multimodal AI Desktop (WINDOWS)
+Sossss# LocalCore Offline Multimodal AI Desktop (WINDOWS)
 
 An offline-first Windows desktop prototype for local chat and multimodal creation.
 

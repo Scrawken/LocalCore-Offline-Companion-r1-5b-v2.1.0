@@ -51,7 +51,6 @@
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.5",
     "dotenv": "^16.4.5",
-    "electron": "^39.8.10",
     "onnxruntime-node": "^1.31.1",
     "three": "^0.186.1"
   },
@@ -67,6 +66,7 @@
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
+    "electron": "^39.8.10",
     "esbuild": "^0.28.2"
   }
 }

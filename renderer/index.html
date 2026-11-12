@@ -650,10 +650,61 @@
       bubble.className = 'chat-bubble';
       const label = document.createElement('strong');
       label.textContent = message.role === 'user' ? 'You: ' : 'LocalCore: ';
-      const content = document.createElement('span');
-      content.style.whiteSpace = 'pre-wrap';
-      content.textContent = message.content;
-      bubble.append(label, content);
+      bubble.appendChild(label);
+
+      // Check if message has image/video metadata
+      console.log('[renderMessage] Message metadata:', message.metadata);
+      if (message.metadata && message.metadata.imageData) {
+        console.log('[renderMessage] Rendering image/video');
+        const content = document.createElement('div');
+        content.style.marginTop = '8px';
+        content.style.width = '100%';
+
+        const textDiv = document.createElement('div');
+        textDiv.style.whiteSpace = 'pre-wrap';
+        textDiv.textContent = message.content;
+        content.appendChild(textDiv);
+
+        if (message.metadata.type === 'image') {
+          const img = document.createElement('img');
+          img.src = message.metadata.imageData;
+          img.style.width = 'auto';
+          img.style.height = 'auto';
+          img.style.maxWidth = '100%';
+          img.style.maxHeight = '400px';
+          img.style.borderRadius = '8px';
+          img.style.marginTop = '8px';
+          img.style.border = '1px solid #1e293b';
+          img.style.display = 'block';
+          img.style.objectFit = 'contain';
+          img.onload = () => console.log('[renderMessage] Image loaded successfully');
+          img.onerror = (e) => console.error('[renderMessage] Image failed to load:', e);
+          content.appendChild(img);
+          console.log('[renderMessage] Image element created, src length:', img.src.length);
+        } else if (message.metadata.type === 'video') {
+          const video = document.createElement('img');
+          video.src = message.metadata.imageData;
+          video.style.width = 'auto';
+          video.style.height = 'auto';
+          video.style.maxWidth = '100%';
+          video.style.maxHeight = '400px';
+          video.style.borderRadius = '8px';
+          video.style.marginTop = '8px';
+          video.style.border = '1px solid #1e293b';
+          video.style.display = 'block';
+          video.style.objectFit = 'contain';
+          content.appendChild(video);
+          console.log('[renderMessage] Video element created');
+        }
+
+        bubble.appendChild(content);
+      } else {
+        const content = document.createElement('span');
+        content.style.whiteSpace = 'pre-wrap';
+        content.textContent = message.content;
+        bubble.appendChild(content);
+      }
+
       return bubble;
     }
 
@@ -892,6 +943,133 @@
         activeMessages.push(userMessage);
         showChatMessage(userMessage);
         sendButton.textContent = image ? 'Analyzing image...' : 'Waiting for local model...';
+
+        // Phase 5 + chat integration: detect tool calls BEFORE model inference
+        // so tools can be invoked and their results shown instead of model text
+        let toolExecuted = false;
+        if (window.localCore.tools && window.localCore.tools.detectAndInvoke) {
+          try {
+            console.log('[renderer] Checking for tool call in:', userContent);
+            // Ensure we have a conversation ID before calling the tool
+            const convId = await ensureConversation();
+            const toolCall = await window.localCore.tools.detectAndInvoke(userContent, convId);
+            if (toolCall && toolCall.detected) {
+              console.log('[renderer] Tool detected:', toolCall);
+              console.log('[renderer] Tool result output:', toolCall.result.output);
+              const statusEl = document.getElementById('memory-status');
+              if (toolCall.result.status === 'executed') {
+                statusEl.textContent = 'Generated and saved to this conversation.';
+                memorySnapshot = await window.localCore.memory.load();
+                renderMemoryList();
+                toolExecuted = true;
+
+                // Display the generated content in chat
+                console.log('[renderer] Tool ID:', toolCall.toolId);
+                console.log('[renderer] Asset ID:', toolCall.result.output.assetId);
+                if (toolCall.toolId === 'generate-image' && toolCall.result.output.assetId) {
+                  console.log('[renderer] Getting image buffer...');
+                  try {
+                    const buffer = await window.localCore.memory.getAssetBuffer(toolCall.result.output.assetId);
+                    console.log('[renderer] Buffer received, length:', buffer.length);
+                    // Convert buffer to base64 data URL
+                    const binaryString = Array.from(buffer, byte => String.fromCharCode(byte)).join('');
+                    const base64 = btoa(binaryString);
+                    const dataUrl = `data:image/png;base64,${base64}`;
+                    console.log('[renderer] Data URL created, length:', dataUrl.length);
+                    // Show image in chat
+                    const assistantMessage = {
+                      role: 'assistant',
+                      content: `Here's the image I generated for you:`,
+                      metadata: {
+                        type: 'image',
+                        imageData: dataUrl,
+                        width: toolCall.result.output.width,
+                        height: toolCall.result.output.height,
+                        assetId: toolCall.result.output.assetId
+                      }
+                    };
+                    activeMessages.push(assistantMessage);
+                    showChatMessage(assistantMessage);
+                    await persistMessage('assistant', assistantMessage.content, assistantMessage.metadata);
+                    statusEl.textContent = 'Image displayed in chat';
+                  } catch (e) {
+                    console.error('[renderer] Failed to load image:', e);
+                    statusEl.textContent = 'Failed to load image: ' + e.message;
+                    const assistantMessage = { role: 'assistant', content: 'I generated the image, but failed to load it for display. You can view it in the Memory tab.' };
+                    activeMessages.push(assistantMessage);
+                    showChatMessage(assistantMessage);
+                    await persistMessage('assistant', assistantMessage.content);
+                  }
+                } else if (toolCall.toolId === 'generate-video' && toolCall.result.output.assetId) {
+                  console.log('[renderer] Getting video buffer...');
+                  try {
+                    const buffer = await window.localCore.memory.getAssetBuffer(toolCall.result.output.assetId);
+                    // Convert buffer to base64 data URL
+                    const binaryString = Array.from(buffer, byte => String.fromCharCode(byte)).join('');
+                    const base64 = btoa(binaryString);
+                    const dataUrl = `data:image/gif;base64,${base64}`;
+                    // Show video in chat
+                    const assistantMessage = {
+                      role: 'assistant',
+                      content: `Here's the video I generated for you:`,
+                      metadata: {
+                        type: 'video',
+                        imageData: dataUrl,
+                        width: toolCall.result.output.width,
+                        height: toolCall.result.output.height,
+                        frames: toolCall.result.output.frames,
+                        assetId: toolCall.result.output.assetId
+                      }
+                    };
+                    activeMessages.push(assistantMessage);
+                    showChatMessage(assistantMessage);
+                    await persistMessage('assistant', assistantMessage.content, assistantMessage.metadata);
+                    statusEl.textContent = 'Video displayed in chat';
+                  } catch (e) {
+                    console.error('[renderer] Failed to load video:', e);
+                    statusEl.textContent = 'Failed to load video: ' + e.message;
+                    const assistantMessage = { role: 'assistant', content: 'I generated the video, but failed to load it for display. You can view it in the Memory tab.' };
+                    activeMessages.push(assistantMessage);
+                    showChatMessage(assistantMessage);
+                    await persistMessage('assistant', assistantMessage.content);
+                  }
+                } else {
+                  console.log('[renderer] No asset ID, using fallback text message');
+                  statusEl.textContent = 'No asset ID returned, using text message';
+                  // Fallback text message
+                  const assistantMessage = { role: 'assistant', content: 'I\'ve generated the ' + (toolCall.toolId === 'generate-image' ? 'image' : 'video') + ' for you. You can view it in the Memory tab.' };
+                  activeMessages.push(assistantMessage);
+                  showChatMessage(assistantMessage);
+                  await persistMessage('assistant', assistantMessage.content);
+                }
+              } else if (toolCall.result.status === 'denied') {
+                statusEl.textContent = 'Generation denied.';
+                toolExecuted = true;
+                const assistantMessage = { role: 'assistant', content: 'The generation was denied. If you want to proceed, please try again.' };
+                activeMessages.push(assistantMessage);
+                showChatMessage(assistantMessage);
+                await persistMessage('assistant', assistantMessage.content);
+              } else if (toolCall.result.status === 'failed') {
+                statusEl.textContent = 'Generation failed: ' + (toolCall.result.error || 'unknown error');
+                toolExecuted = true;
+                const assistantMessage = { role: 'assistant', content: 'Sorry, the generation failed: ' + (toolCall.result.error || 'unknown error') };
+                activeMessages.push(assistantMessage);
+                showChatMessage(assistantMessage);
+                await persistMessage('assistant', assistantMessage.content);
+              }
+            }
+          } catch (toolError) {
+            console.warn('Tool invocation failed:', toolError.message);
+          }
+        }
+
+        // Skip model inference if a tool was executed
+        if (toolExecuted) {
+          sendButton.disabled = false;
+          sendButton.textContent = 'Send to Local Model';
+          return;
+        }
+
         try {
           await persistMessage('user', userContent);
           if (image) await persistAttachedImage(image, p);
@@ -996,28 +1174,6 @@
           }
         } catch (memoryError) {
           document.getElementById('memory-status').textContent = 'Model replied, but could not save conversation: ' + memoryError.message;
-        }
-        // Phase 5 + chat integration: if the user's message asked for a tool
-        // action (image/video generation), invoke it via the broker. Maura
-        // proposes; the approval dialog asks you to authorize.
-        if (window.localCore.tools && window.localCore.tools.detectAndInvoke) {
-          try {
-            const toolCall = await window.localCore.tools.detectAndInvoke(userContent, currentConversationId);
-            if (toolCall && toolCall.detected) {
-              const statusEl = document.getElementById('memory-status');
-              if (toolCall.result.status === 'executed') {
-                statusEl.textContent = 'Generated and saved to this conversation.';
-                memorySnapshot = await window.localCore.memory.load();
-                renderMemoryList();
-              } else if (toolCall.result.status === 'denied') {
-                statusEl.textContent = 'Generation denied.';
-              } else if (toolCall.result.status === 'failed') {
-                statusEl.textContent = 'Generation failed: ' + (toolCall.result.error || 'unknown error');
-              }
-            }
-          } catch (toolError) {
-            console.warn('Tool invocation failed:', toolError.message);
-          }
         }
       } catch (error) {
         document.getElementById('memory-status').textContent = 'Local inference failed: ' + error.message;
@@ -2100,6 +2256,7 @@
     // decision is returned. Deny is the default focus.
     if (window.localCore.tools && window.localCore.tools.onApprovalRequest) {
       window.localCore.tools.onApprovalRequest(({ promptId, preview }) => {
+        console.log('[renderer] Approval request received:', { promptId, preview });
         const overlay = document.getElementById('approvalOverlay');
         document.getElementById('approvalSummary').textContent = preview.summary || '';
         document.getElementById('approvalTarget').textContent = preview.exactTarget || '';
@@ -2120,6 +2277,7 @@
         overlay.hidden = false;
         document.getElementById('approvalDeny').focus();
         const respond = decision => {
+          console.log('[renderer] User responded with:', decision);
           overlay.hidden = true;
           window.localCore.tools.respondToApproval(promptId, decision);
         };

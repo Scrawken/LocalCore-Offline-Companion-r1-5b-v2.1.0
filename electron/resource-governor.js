@@ -230,7 +230,7 @@ function createResourceGovernor() {
         ceiling: currentProfile.peakMemoryCeilingMB,
         resident: Object.fromEntries(residentMB)
       });
-      lastPressureAt = now;
+      lastPressureAt = Date.now();
 
       // Evict heavy leases to free memory
       const heavyLeases = Array.from(leases.values()).filter(l => isHeavy(l.kind));

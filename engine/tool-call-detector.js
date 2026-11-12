@@ -10,19 +10,28 @@
  * tool-call (the model emitting a structured [tool:...] tag) slots in later.
  */
 
+// Strip a leading preposition ("of", "for", "showing") and trailing punctuation
+// from an extracted prompt so "image of a sunset" -> "a sunset".
+function cleanPrompt(text) {
+  return text
+    .replace(/^(?:of|for|showing|that shows?|depicting)\s+/i, '')
+    .replace(/[?.!\s]+$/, '')
+    .trim();
+}
+
 const GENERATION_INTENTS = [
   {
     toolId: 'generate-image',
     scope: 'generate:image',
     // "generate/draw/create/make/show me an image/picture of X"
-    pattern: /\b(?:generate|create|make|draw|show me|produce|render)\b[^.]*?\b(?:image|picture|pic|photo|drawing|art|artwork)\b[^.]*?\b(?:of|for|showing)?\b(.+)/i,
-    extractPrompt: match => match[1].trim()
+    pattern: /\b(?:generate|create|make|draw|show me|produce|render)\b[^.]*?\b(?:image|picture|pic|photo|drawing|art|artwork)\b[^.]*?\b(.+)/i,
+    extractPrompt: match => cleanPrompt(match[1])
   },
   {
     toolId: 'generate-video',
     scope: 'generate:video',
-    pattern: /\b(?:generate|create|make|render|show me)\b[^.]*?\b(?:video|animation|gif|clip|motion)\b[^.]*?\b(?:of|for|showing)?\b(.+)/i,
-    extractPrompt: match => match[1].trim()
+    pattern: /\b(?:generate|create|make|render|show me)\b[^.]*?\b(?:video|animation|gif|clip|motion)\b[^.]*?\b(.+)/i,
+    extractPrompt: match => cleanPrompt(match[1])
   }
 ];
 

@@ -285,6 +285,15 @@ function createSqliteMemoryStore(userDataPath, modelId = null) {
       };
     },
 
+    getAssetPath(assetId) {
+      if (typeof assetId !== 'string' || !/^[0-9a-f-]{36}$/i.test(assetId)) {
+        throw new Error('Invalid generated content identifier.');
+      }
+      const row = db.prepare('SELECT file_name FROM assets WHERE id = ?').get(assetId);
+      if (!row) throw new Error('Generated content not found.');
+      return path.join(assetsPath, row.file_name);
+    },
+
     deleteConversation(conversationId) {
       const assets = db.prepare('SELECT file_name FROM assets WHERE conversation_id = ?').all(conversationId);
       db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);

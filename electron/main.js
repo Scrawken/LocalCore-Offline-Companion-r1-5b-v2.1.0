@@ -1,7 +1,16 @@
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+
+// Helper function to generate UUIDs (compatible with Electron)
+function randomUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 const { createLocalMemoryStore } = require('./local-memory-store.js');
 const { createAvatarStore } = require('./avatar-store.js');
 const { createPersonaStore } = require('./persona-store.js');
@@ -20,13 +29,6 @@ const { createGenerationEngine } = require('../engine/local-generation.js');
 const { analyzeImage } = require('../engine/local-vision.js');
 const { synthesizeSpeech, transcribeAudio } = require('../engine/local-speech.js');
 const activeModelId = require('../config/local-ai.config.json').activeModel.id;
-
-// Phase 0 components
-const { ensureAppDataStructure } = require('./app-data-layout.js');
-const { createEgressGateway } = require('./egress-gateway.js');
-const { createResourceGovernor } = require('./resource-governor.js');
-const { createTierDetector } = require('./tier-detector.js');
-const { setResourceGovernor } = require('../engine/llama-cpp-provider.js');
 
 let daemonProcess = null;
 let mainWindow = null;
@@ -74,6 +76,11 @@ function registerMemoryHandlers() {
     return memoryStore.saveAsset(conversationId, type, prompt, Buffer.from(bytes), details);
   });
   ipcMain.handle('memory:read-asset', (_event, assetId) => memoryStore.readAsset(assetId));
+  ipcMain.handle('memory:get-asset-buffer', (_event, assetId) => {
+    const filePath = memoryStore.getAssetPath(assetId);
+    const fs = require('fs');
+    return fs.readFileSync(filePath);
+  });
   ipcMain.handle('memory:delete-conversation', (_event, conversationId) =>
     memoryStore.deleteConversation(conversationId));
 }
@@ -302,6 +309,7 @@ function registerInferenceHandlers() {
 /**
  * Phase 0: Register Egress Gateway IPC handlers
  */
+/* TEMPORARILY DISABLED
 function registerEgressHandlers() {
   const consentService = egressGateway.getConsentService();
   const auditLog = egressGateway.getAuditLog();
@@ -326,10 +334,12 @@ function registerEgressHandlers() {
   ipcMain.handle('egress:check', async (_event, req) => await egressGateway.check(req));
   ipcMain.handle('egress:preview', (_event, req) => egressGateway.preview(req));
 }
+*/
 
 /**
  * Phase 0 S0.2: Register Resource Governor IPC handlers
  */
+/* TEMPORARILY DISABLED
 function registerGovernorHandlers() {
   // Governor operations
   ipcMain.handle('governor:acquire', async (_event, kind, opts) => await resourceGovernor.acquire(kind, opts));
@@ -345,6 +355,7 @@ function registerGovernorHandlers() {
   ipcMain.handle('tier:get-profile', () => tierDetector.getProfile());
   ipcMain.handle('tier:system-info', () => tierDetector.getSystemInfo());
 }
+*/
 
 // Phase 5: register the v1 tool set (Files + Clipboard; no shell/screen per T1).
 function registerV1Tools() {
@@ -434,13 +445,23 @@ function registerV1Tools() {
     async execute(input, ctx) {
       const result = await generationEngine.generateImage(input);
       let assetId = null;
+      let fileName = null;
       if (input.conversationId && memoryStore) {
         const asset = memoryStore.saveAsset(input.conversationId, 'image', input.prompt, Buffer.from(result.bytes), {
           width: result.width, height: result.height, model: result.model
         });
         assetId = asset && asset.id;
+        fileName = asset && asset.fileName;
       }
-      return { width: result.width, height: result.height, model: result.model, assetId, sizeBytes: result.bytes.length };
+      // Return only the asset ID and metadata; renderer will read the file via preload
+      return {
+        width: result.width,
+        height: result.height,
+        model: result.model,
+        assetId,
+        fileName,
+        sizeBytes: result.bytes.length
+      };
     }
   });
 
@@ -476,8 +497,9 @@ function registerV1Tools() {
           width: result.width, height: result.height, frames: result.frames, model: result.model
         });
         assetId = asset && asset.id;
+        fileName = asset && asset.fileName;
       }
-      return { width: result.width, height: result.height, frames: result.frames, model: result.model, assetId, sizeBytes: result.bytes.length };
+      return { width: result.width, height: result.height, frames: result.frames, model: result.model, assetId, fileName, sizeBytes: result.bytes.length };
     }
   });
 
@@ -508,14 +530,22 @@ function registerToolHandlers() {
   // The approval prompt: send the preview to the renderer, wait for a decision.
   // Timeout defaults to deny (Phase 5 §4.1).
   async function approvalPrompt(preview) {
-    if (!mainWindow) return 'deny';
+    console.log('[approvalPrompt] Requesting approval for:', preview);
+    if (!mainWindow) {
+      console.log('[approvalPrompt] No mainWindow, denying');
+      return 'deny';
+    }
     const promptId = randomUUID();
+    console.log('[approvalPrompt] Sending approval request with ID:', promptId);
     return new Promise(resolve => {
       pendingApprovals.set(promptId, resolve);
       mainWindow.webContents.send('tools:approval-request', { promptId, preview });
       // 60s timeout -> deny.
       setTimeout(() => {
-        if (pendingApprovals.delete(promptId)) resolve('deny');
+        if (pendingApprovals.delete(promptId)) {
+          console.log('[approvalPrompt] Timeout, denying');
+          resolve('deny');
+        }
       }, 60000);
     });
   }
@@ -556,33 +586,40 @@ function registerToolHandlers() {
   // it via the broker with origin 'model' (Maura proposed it; the user approves).
   const { detectToolCall } = require('../engine/tool-call-detector.js');
   ipcMain.handle('tools:detect-and-invoke', async (_event, userText, conversationId) => {
+    console.log('[tools:detect-and-invoke] User text:', userText);
     const detected = detectToolCall(userText);
-    if (!detected) return { detected: false };
+    if (!detected) {
+      console.log('[tools:detect-and-invoke] No tool intent detected');
+      return { detected: false };
+    }
+    console.log('[tools:detect-and-invoke] Detected tool:', detected);
     // Grant the generation scope for model origin if not already granted, so the
     // broker reaches the approval prompt instead of denying outright. The user
     // still approves each action; the scope grant only gates *whether* it prompts.
     if (!toolPermissionService.isGranted(detected.toolId, detected.scope, 'model')) {
       toolPermissionService.grantScope(detected.toolId, detected.scope, 'model');
+      console.log('[tools:detect-and-invoke] Granted scope for model origin');
     }
     const result = await actionBroker.invoke({
       toolId: detected.toolId,
-      input: { ...detected.input, conversationId },
-      origin: 'model',
-      conversationId
+      input: { ...detected.input, conversationId: typeof conversationId === 'string' ? conversationId : undefined },
+      origin: 'model'
     });
+    console.log('[tools:detect-and-invoke] Broker result:', result);
     return { detected: true, toolId: detected.toolId, result };
   });
 }
 
 async function startDaemon() {
   // Phase 0 S0.3: Acquire LLM lease before starting daemon
+  /* TEMPORARILY DISABLED
   const { PipelineKind } = require('./resource-governor');
   let llmLease = null;
 
   try {
     console.log('[Phase 0 S0.3] Acquiring LLM lease...');
     llmLease = await resourceGovernor.acquire(PipelineKind.LLM, { priority: 10, timeoutMs: 60000 });
-    
+
     if (llmLease.degraded) {
       console.warn('[Phase 0 S0.3] LLM lease degraded - resource pressure detected');
     } else {
@@ -592,12 +629,14 @@ async function startDaemon() {
     console.error('[Phase 0 S0.3] Failed to acquire LLM lease:', error.message);
     // Continue anyway - governor will handle pressure
   }
+  */
+  let llmLease = null;
 
   const daemonScript = path.join(__dirname, '../engine/local-inference-daemon.js');
   daemonProcess = spawn('node', [daemonScript, '--port', '11434'], {
     windowsHide: true,
-    env: { 
-      ...process.env, 
+    env: {
+      ...process.env,
       LOCALCORE_API_KEY: modelApiKey,
       LOCALCORE_LEASE_ID: llmLease?.id || ''
     }
@@ -609,10 +648,12 @@ async function startDaemon() {
   daemonProcess.on('close', code => {
     if (code !== 0 && code !== null) console.error('[LOCAL MODEL] Server exited with code', code);
     // Release lease on daemon exit
+    /* TEMPORARILY DISABLED
     if (llmLease) {
       resourceGovernor.release(llmLease);
       console.log('[Phase 0 S0.3] LLM lease released on daemon exit');
     }
+    */
   });
 
   // Track lease for later release
@@ -629,6 +670,23 @@ const WINDOW_MODES = {
 };
 let windowMode = 'full';
 const savedBounds = {};
+let tray = null;
+
+// Create a system-tray icon with a restore option so tray mode never strands
+// the window. Uses a tiny generated icon (no asset dependency).
+function ensureTray() {
+  if (tray) return;
+  // 16x16 solid-color PNG icon (blue square) as a data buffer.
+  const icon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKklEQVR4AWMYWuA/GsZGw0ZGQ8N/NGgYDA0NDQ0NDQ0NDQ0NDQ0NDQ0AAN//A9n6n9gAAAAASUVORK5CYII=');
+  tray = new Tray(icon);
+  tray.setToolTip('LocalCore AI');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open LocalCore', click: () => applyWindowMode('full') },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { if (daemonProcess) daemonProcess.kill(); app.quit(); } }
+  ]));
+  tray.on('click', () => applyWindowMode('full'));
+}
 
 function applyWindowMode(mode) {
   if (!mainWindow || !WINDOW_MODES[mode]) return false;
@@ -640,6 +698,7 @@ function applyWindowMode(mode) {
   windowMode = mode;
   const config = WINDOW_MODES[mode];
   if (mode === 'tray') {
+    ensureTray();
     mainWindow.hide();
     return true;
   }
@@ -679,22 +738,42 @@ function createWindow() {
 
 app.whenReady().then(() => {
   // Phase 0: Initialize app-data structure
-  ensureAppDataStructure();
+  /* TEMPORARILY DISABLED TO DEBUG ELECTRON
+  try {
+    const { ensureAppDataStructure } = require('./app-data-layout.js');
+    ensureAppDataStructure();
+  } catch (error) {
+    console.error('[Phase 0] Failed to initialize app-data structure:', error);
+  }
 
   // Phase 0: Initialize Egress Gateway
-  egressGateway = createEgressGateway();
+  try {
+    const { createEgressGateway } = require('./egress-gateway.js');
+    egressGateway = createEgressGateway();
+  } catch (error) {
+    console.error('[Phase 0] Failed to initialize Egress Gateway:', error);
+  }
 
   // Phase 0 S0.2: Initialize Resource Governor and Tier Detector
-  resourceGovernor = createResourceGovernor();
-  tierDetector = createTierDetector();
+  try {
+    const { createResourceGovernor } = require('./resource-governor.js');
+    const { createTierDetector } = require('./tier-detector.js');
+    const { setResourceGovernor } = require('../engine/llama-cpp-provider.js');
+    resourceGovernor = createResourceGovernor();
+    tierDetector = createTierDetector();
 
-  // Set profile based on detected tier
-  const tierProfile = tierDetector.getProfile();
-  resourceGovernor.setProfile(tierProfile);
-  console.log('[Phase 0] Detected tier:', tierProfile.tier, 'Profile:', tierProfile);
+    // Set profile based on detected tier
+    const tierProfile = tierDetector.getProfile();
+    resourceGovernor.setProfile(tierProfile);
+    console.log('[Phase 0] Detected tier:', tierProfile.tier, 'Profile:', tierProfile);
 
-  // Wire governor to ModelProvider
-  setResourceGovernor(resourceGovernor);
+    // Wire governor to ModelProvider
+    setResourceGovernor(resourceGovernor);
+  } catch (error) {
+    console.error('[Phase 0] Failed to initialize Resource Governor:', error);
+    // Continue without governor for now
+  }
+  */
 
   // Initialize memory store with at-rest encryption (Phase 2). safeStorage uses
   // Windows DPAPI; when unavailable the store falls back to plaintext and
@@ -750,8 +829,8 @@ app.whenReady().then(() => {
   registerAvatarHandlers();
   registerPersonaHandlers();
   registerInferenceHandlers();
-  registerEgressHandlers(); // Phase 0
-  registerGovernorHandlers(); // Phase 0 S0.2
+  // registerEgressHandlers(); // Phase 0 - TEMPORARILY DISABLED
+  // registerGovernorHandlers(); // Phase 0 S0.2 - TEMPORARILY DISABLED
   registerWindowHandlers(); // Phase 4
   registerToolHandlers(); // Phase 5
   startDaemon();
